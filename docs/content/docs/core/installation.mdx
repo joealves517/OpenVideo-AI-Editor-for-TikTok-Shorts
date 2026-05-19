@@ -1,0 +1,86 @@
+---
+title: Installation
+description: How to install and set up OpenVideo Core.
+---
+
+## Package Manager
+
+Install OpenVideo Core using your preferred package manager. The core package is headless and does not include the PixiJS renderer by default.
+
+```bash
+# npm
+npm install @openvideo/core
+# or
+pnpm add @openvideo/core
+# or
+yarn add @openvideo/core
+```
+
+## Browser & Environment Support
+
+OpenVideo Core runs in any modern environment that supports the **WebCodecs API** for video processing.
+
+- **Browsers**: Chrome 94+, Edge 94+, Safari 16.4+.
+- **Environments**: Web Workers, Service Workers, and Node.js (with appropriate WebCodecs polyfills/implementations).
+
+## Quick Start
+
+Initialize the engine and add your first clip using the Command API.
+
+```ts
+import { Core, nanoid } from "@openvideo/core";
+
+// 1. Initialize the headless engine
+const core = new Core({
+  settings: {
+    width: 1920,
+    height: 1080,
+    fps: 30,
+    duration: 30_000_000,
+  },
+});
+
+// 2. Add a clip using the DX helper
+const video = await core.clip.add({
+  type: "Video",
+  src: "video.mp4",
+  display: { from: 0, to: 5_000_000 },
+});
+
+// 3. Control playback
+core.play();
+```
+
+## TypeScript Support
+
+The SDK is written in TypeScript and provides comprehensive type definitions.
+
+```ts
+import { Core, type IProjectSettings } from "@openvideo/core";
+
+const settings: IProjectSettings = {
+  width: 1080,
+  height: 1920,
+  fps: 30,
+  duration: 60_000_000
+};
+
+const core = new Core({ settings });
+```
+
+## Verifying Capabilities
+
+Before performing complex video operations, verify that the environment supports the necessary APIs.
+
+```ts
+import { Compositor } from "@openvideo/core";
+
+const supported = await Compositor.isSupported();
+if (supported) {
+  console.log("WebCodecs and video processing are supported.");
+}
+```
+
+---
+
+Next, learn the [Basic Usage](./basic-usage) or explore the [Command API](./commands).

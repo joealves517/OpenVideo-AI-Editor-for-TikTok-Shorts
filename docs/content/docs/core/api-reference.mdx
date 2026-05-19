@@ -1,0 +1,123 @@
+---
+title: API Reference
+description: Complete API reference for OpenVideo Core.
+---
+
+## Core Engine
+
+The central "Brain" of OpenVideo. Headless, deterministic, and command-driven.
+
+### Constructor
+
+```ts
+import { Core } from "@openvideo/core";
+
+const core = new Core({
+  settings: {
+    width: 1920,
+    height: 1080,
+    fps: 30,
+    duration: 30_000_000,
+  },
+});
+```
+
+### Methods
+
+- `core.execute(command: Command)`: Executes a single command.
+- `core.batch(commands: Command[])`: Executes multiple commands in a single transaction.
+- `core.undo()`: Reverts the last command.
+- `core.redo()`: Re-applies the last undone command.
+- `core.play()`: Starts playback.
+- `core.pause()`: Pauses playback.
+- `core.seek(time: number)`: Seeks to a specific time (microseconds).
+
+### Properties
+
+- `core.store`: The Zustand store containing the project state.
+- `core.playback`: The playback controller instance.
+
+---
+
+## Clip API (DX Helpers)
+
+High-level helpers that wrap common `clip.*` commands.
+
+- `core.clip.add(payload)`: Prepares and adds a new clip.
+- `core.clip.update(id, updates)`: Updates properties of a clip.
+- `core.clip.remove(ids)`: Removes clips by ID.
+- `core.clip.split(time?, id?)`: Splits a clip at the specified time.
+- `core.clip.duplicate(ids)`: Clones existing clips.
+
+---
+
+## Track API (DX Helpers)
+
+High-level helpers that wrap common `track.*` commands.
+
+- `core.track.add(payload?)`: Adds a new timeline track.
+- `core.track.remove(id)`: Removes a track and its clips.
+- `core.track.move(id, newIndex)`: Reorders a track.
+
+---
+
+## Project API
+
+Methods for managing the overall project state.
+
+- `core.project.new()`: Resets to a blank project.
+- `core.project.export()`: Returns a JSON snapshot of the project.
+- `core.project.import(json)`: Loads a project from a JSON snapshot.
+
+---
+
+## Compositor
+
+High-performance headless video compositor for exporting.
+
+```ts
+import { Compositor } from "@openvideo/core";
+
+const compositor = new Compositor({
+  width: 1920,
+  height: 1080,
+  fps: 30,
+});
+```
+
+### Methods
+
+- `compositor.output()`: Returns a `ReadableStream` of the rendered video.
+- `compositor.renderFrame(timeMs: number)`: Returns a base64 PNG data-URL of a single frame.
+
+---
+
+## Data Models
+
+### IProject
+
+```ts
+interface IProject {
+  settings: IProjectSettings;
+  tracks: ITrack[];
+  clips: Record<string, AnyClip>;
+}
+```
+
+### IBaseClip
+
+```ts
+interface IBaseClip {
+  id: string;
+  type: ClipType;
+  display: { from: number; to: number };
+  trim: { from: number; to: number };
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  angle: number;
+  opacity: number;
+  [key: string]: any;
+}
+```

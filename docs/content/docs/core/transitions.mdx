@@ -1,0 +1,86 @@
+---
+title: Transitions
+description: Visual effects between clips in Core using the Command API.
+---
+
+In OpenVideo Core, transitions are represented as specialized **Transition Clips**. To add a transition, you dispatch a `clip.add` command with the appropriate transition data.
+
+## Adding a Transition
+
+A transition is placed on the timeline where two clips overlap. It references a `fromClipId` and a `toClipId`.
+
+```ts
+import { core, nanoid } from "@openvideo/core";
+
+// Add a 1-second fade transition between two clips
+core.execute({
+  id: nanoid(),
+  type: "clip.add",
+  payload: {
+    clip: {
+      id: nanoid(),
+      type: "Transition",
+      name: "Fade Transition",
+      transitionEffect: {
+        key: "fade", // The effect identifier
+      },
+      display: {
+        from: 4_500_000, // Starts 0.5s before the junction
+        to: 5_500_000,   // Ends 0.5s after the junction
+      },
+      fromClipId: "video_1",
+      toClipId: "video_2",
+    }
+  }
+});
+```
+
+## Available Transition Effects
+
+OpenVideo supports a wide range of GL-based transitions. Common keys include:
+
+| Key | Effect |
+| :--- | :--- |
+| `fade` | Standard cross-fade |
+| `cube` | 3D cube rotation |
+| `wipeLeft` / `wipeRight` | Linear directional wipes |
+| `zoomInCircles` | Concentric circles reveal |
+| `glitchMemories` | Digital glitch transition |
+| `dreamy` | Soft blur transition |
+
+## Custom Transitions
+
+You can define custom transition shaders and register them with the engine.
+
+```ts
+import { core, registerCustomTransition } from "@openvideo/core";
+
+registerCustomTransition("my_custom_effect", {
+  label: "My Custom Effect",
+  fragment: `
+    vec4 transition(vec2 p) {
+      return mix(getFromColor(p), getToColor(p), progress);
+    }
+  `,
+});
+```
+
+Once registered, you can use `"my_custom_effect"` as the `key` in your transition clip.
+
+## Managing Transitions
+
+Since transitions are clips, you can update them (e.g., change duration or effect) or remove them using the standard Clip API.
+
+```ts
+// Update transition duration
+core.clip.update(transitionId, {
+  display: { from: 4_000_000, to: 6_000_000 }
+});
+
+// Remove transition
+core.clip.remove([transitionId]);
+```
+
+---
+
+Next, learn how to apply [Effects](./effects) or manage [Tracks](./tracks).

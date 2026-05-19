@@ -1,0 +1,1655 @@
+import {
+  Application,
+  Container,
+  Filter,
+  GlProgram,
+  RenderTexture,
+  Sprite,
+  Texture,
+  UniformGroup,
+  Graphics,
+  BlurFilter,
+  ColorMatrixFilter,
+} from 'pixi.js';
+import { makeEffect } from './effect/effect';
+import {
+  DEFAULT_AUDIO_CONF,
+  getDefaultAudioConf,
+  type IClip,
+  Effect,
+  Transition,
+} from './clips';
+import { recodemux } from 'wrapbox';
+import { Log } from './utils/log';
+import EventEmitter from './event-emitter';
+import { PixiSpriteRenderer } from './sprite/pixi-sprite-renderer';
+import { parseColor, hexToRgb } from './utils/color';
+import { vertex } from './effect/vertex';
+import {
+  CHROMA_KEY_FRAGMENT,
+  SELECTIVE_HSL_FRAGMENT,
+} from './effect/glsl/custom-glsl';
+import { sleep } from './utils';
+import {
+  clipToJSON,
+  jsonToClip,
+  type ClipJSON,
+  type ProjectJSON,
+  type GlobalTransitionJSON as TransitionJSON,
+} from './json-serialization';
+import { Video } from './clips/video-clip';
+import { Image } from './clips/image-clip';
+import { makeTransition } from './transition/transition';
+import {
+  applyColorAdjustmentToMatrix,
+  getAllSelectiveHsl,
+  hasColorAdjustment,
+} from './utils/color-adjustment';
+
+export interface ICompositorOpts {
+  width?: number;
+  height?: number;
+  bitrate?: number;
+  fps?: number;
+  bgColor?: string;
+  format?: string;
+  videoCodec?: string;
+  /**
+   * If false, exclude audio track from the output video
+   */
+  audio?: false;
+  audioCodec?: string;
+  audioSampleRate?: number;
+  /**
+   * Write metadata tags to the output video
+   */
+  metaDataTags?: Record<string, string>;
+  /**
+   * Unsafe, may be deprecated at any time
+   */
+  __unsafe_hardwareAcceleration__?: HardwarePreference;
+}
+
+let COM_ID = 0;
+
+/**
+ * Prevent VideoEncoder queue from accumulating too many VideoFrames and causing memory issues
+ */
+async function waitEncoderQueue(getQSize: () => number) {
+  if (getQSize() > 50) {
+    await sleep(15);
+    await waitEncoderQueue(getQSize);
+  }
+}
+
+/**
+ * Video compositor that can add multiple {@link OffscreenSprite} instances,
+ * @example
+ * const spr1 = new OffscreenSprite(
+ *   new Video((await fetch('<mp4 url>')).body),
+ * );
+ * const spr2 = new OffscreenSprite(
+ *   await Audio.fromUrl('<audio url>'),
+ * );
+ * const com = new Compositor({ width: 1280, height: 720, });
+
+ * await com.addSprite(spr1);
+ * await com.addSprite(spr2);
+
+ * com.output(); // => ReadableStream
+ *
+ */
+export class Compositor extends EventEmitter<{
+  OutputProgress: number;
+  error: Error;
+}> {
+  /**
+   * Check compatibility with the current environment
+   * @param args.videoCodec Specify video codec, default avc1.42E032
+   * @param args.width Specify video width, default 1920
+   * @param args.height Specify video height, default 1080
+   * @param args.bitrate Specify video bitrate, default 5e6
+   */
+  static async isSupported(
+    args: {
+      videoCodec?: string;
+      width?: number;
+      height?: number;
+      bitrate?: number;
+    } = {}
+  ): Promise<boolean> {
+    return (
+      (self.OffscreenCanvas != null &&
+        self.VideoEncoder != null &&
+        self.VideoDecoder != null &&
+        self.VideoFrame != null &&
+        self.AudioEncoder != null &&
+        self.AudioDecoder != null &&
+        self.AudioData != null &&
+        ((
+          await self.VideoEncoder.isConfigSupported({
+            codec: args.videoCodec ?? 'avc1.42E032',
+            width: args.width ?? 1920,
+            height: args.height ?? 1080,
+            bitrate: args.bitrate ?? 7e6,
+          })
+        ).supported ??
+          false) &&
+        (
+          await self.AudioEncoder.isConfigSupported({
+            codec: (await getDefaultAudioConf()).codec,
+            sampleRate: DEFAULT_AUDIO_CONF.sampleRate,
+            numberOfChannels: DEFAULT_AUDIO_CONF.channelCount,
+          })
+        ).supported) ??
+      false
+    );
+  }
+
+  private logger = Log.create(`id:${COM_ID++},`);
+
+  private destroyed = false;
+
+  private sprites: Array<IClip & { main: boolean; expired: boolean }> = [];
+
+  private canvas: OffscreenCanvas;
+
+  private pixiApp: Application | null = null;
+
+  // Stop output
+  private stopOutput: (() => void) | null = null;
+
+  private opts: Required<ICompositorOpts>;
+
+  private hasVideoTrack: boolean;
+
+  /**
+   * Create a compositor instance based on configuration
+   * @param opts ICompositorOpts
+   */
+  constructor(opts: ICompositorOpts = {}) {
+    super();
+
+    console.log('Compositor constructor', opts);
+    const { width = 0, height = 0 } = opts;
+    this.canvas = new OffscreenCanvas(width, height);
+    // this.canvas = document.querySelector('#canvas') as HTMLCanvasElement
+
+    this.opts = Object.assign(
+      {
+        bgColor: '#000',
+        width: 0,
+        height: 0,
+        format: 'mp4',
+        videoCodec: 'avc1.42E032',
+        audio: true,
+        audioCodec: 'aac',
+        audioSampleRate: 48000,
+        bitrate: 5e6,
+        fps: 30,
+        metaDataTags: null,
+      },
+      opts
+    );
+
+    console.log('Compositor opts', this.opts);
+    this.hasVideoTrack = width * height > 0;
+
+    // Initialize codec detection early
+    getDefaultAudioConf().catch((err) => {
+      this.logger.warn('Failed to detect audio codec:', err);
+    });
+  }
+
+  public async initPixiApp(): Promise<void> {
+    const { width, height } = this.opts;
+    this.pixiApp = new Application();
+    await this.pixiApp.init({
+      canvas: this.canvas as any,
+      width,
+      height,
+      backgroundColor: 0x000000,
+      antialias: false,
+      autoDensity: false,
+      resolution: 1,
+      preference: 'webgl', // Force WebGL to avoid WebGPU overhead/failures in Docker
+    });
+
+    // Verify that the app is fully initialized
+    if (this.pixiApp.renderer == null || this.pixiApp.stage == null) {
+      throw new Error('Pixi.js Application failed to initialize properly');
+    }
+
+    // Stop the ticker - we manually call render() in the compositor
+    // This prevents the ticker from trying to render after cleanup
+    try {
+      const anyApp = this.pixiApp as any;
+      if (anyApp.ticker && typeof anyApp.ticker.stop === 'function') {
+        anyApp.ticker.stop();
+      }
+    } catch (e) {
+      // ignore if ticker doesn't exist or can't be stopped
+    }
+
+    // No red rectangle - video frames will be rendered directly via sprites
+  }
+
+  /**
+   * Add a clip for video composition. Video duration defaults to the maximum duration value from all clips
+   * @param clip Clip (extends BaseSprite)
+   * @param opts.main If main is true, the video duration uses this clip's duration value
+   */
+  async addSprite(clip: IClip, opts: { main?: boolean } = {}): Promise<void> {
+    const logAttrs = {
+      rect: {
+        x: clip.left,
+        y: clip.top,
+        w: clip.width,
+        h: clip.height,
+      },
+      display: { ...clip.display },
+      duration: clip.duration,
+      playbackRate: clip.playbackRate,
+      zIndex: clip.zIndex,
+    };
+    this.logger.info('Compositor add clip', logAttrs);
+
+    const cloned = await clip.clone();
+
+    // Provide renderer to cloned clip if Pixi App is ready
+    if (
+      this.pixiApp != null &&
+      this.pixiApp.renderer != null &&
+      typeof cloned.setRenderer === 'function'
+    ) {
+      cloned.setRenderer(this.pixiApp.renderer);
+    }
+
+    this.logger.info('Compositor add clip ready');
+    this.sprites.push(
+      Object.assign(cloned, {
+        main: opts.main ?? false,
+        expired: false,
+      })
+    );
+    this.sprites.sort((a, b) => a.zIndex - b.zIndex);
+  }
+
+  private initMuxer(duration: number) {
+    const {
+      fps,
+      width,
+      height,
+      videoCodec,
+      bitrate,
+      audio,
+      metaDataTags,
+      format,
+      audioCodec,
+      audioSampleRate,
+    } = this.opts;
+
+    // Check if any sprites actually have video capabilities (width > 0 && height > 0)
+    // This handles cases where width/height are set but all sprites are audio-only
+    const hasVideoSprites = this.sprites.some(
+      (sprite) => sprite.width > 0 && sprite.height > 0
+    );
+
+    // Only create video track if we have video track configured AND we have video sprites
+    const shouldCreateVideoTrack = this.hasVideoTrack && hasVideoSprites;
+
+    const muxer = recodemux({
+      format: format || 'mp4',
+      video: shouldCreateVideoTrack
+        ? {
+            width,
+            height,
+            expectFPS: fps,
+            codec: videoCodec,
+            bitrate,
+            __unsafe_hardwareAcceleration__:
+              this.opts.__unsafe_hardwareAcceleration__,
+          }
+        : null,
+      audio:
+        audio === false
+          ? null
+          : {
+              codec: audioCodec || DEFAULT_AUDIO_CONF.codecType,
+              sampleRate: audioSampleRate || DEFAULT_AUDIO_CONF.sampleRate,
+              channelCount: DEFAULT_AUDIO_CONF.channelCount,
+            },
+      duration,
+      metaDataTags: metaDataTags,
+    });
+    return muxer;
+  }
+
+  /**
+   * Output video file binary stream
+   * @param opts.maxTime Maximum duration allowed for output video, content exceeding this will be ignored
+   */
+  output(opts: { maxTime?: number } = {}): ReadableStream<Uint8Array> {
+    console.log('Compositor output', opts);
+    if (this.sprites.length === 0) throw Error('No sprite added');
+
+    const mainSprite = this.sprites.find((it) => it.main);
+    // Max time: prefer main sprite, otherwise use maximum value
+    // Filter out Infinity durations to avoid issues
+    const durations = this.sprites.map((it) => it.display.from + it.duration);
+    const finiteDurations = durations.filter((d) => d !== Infinity);
+
+    const maxTime =
+      opts.maxTime ??
+      (mainSprite != null
+        ? mainSprite.display.from + mainSprite.duration
+        : finiteDurations.length > 0
+          ? Math.max(...finiteDurations)
+          : 0);
+
+    if (maxTime === Infinity || maxTime <= 0) {
+      throw Error(
+        'Unable to determine the end time, please specify a main sprite, or limit the duration of Image, Audio'
+      );
+    }
+    // Main video's (main) videoTrack duration value is 0
+    if (maxTime === -1) {
+      this.logger.warn(
+        "Unable to determine the end time, process value don't update"
+      );
+    }
+
+    this.logger.info(`start combinate video, maxTime:${maxTime}`);
+    const muxer = this.initMuxer(maxTime);
+    let startTime = performance.now();
+    const stopMuxer = this.runEncoding(muxer, maxTime, {
+      onProgress: (prog) => {
+        this.logger.debug('OutputProgress:', prog);
+        this.emit('OutputProgress', prog);
+      },
+      onEnded: async () => {
+        await muxer.flush();
+        this.logger.info(
+          '===== output ended =====, cost:',
+          performance.now() - startTime
+        );
+        this.emit('OutputProgress', 1);
+        this.destroy();
+      },
+      onError: (err) => {
+        this.emit('error', err);
+        muxer.close();
+        this.destroy();
+      },
+    });
+
+    this.stopOutput = () => {
+      stopMuxer();
+      muxer.close();
+    };
+
+    return muxer.stream;
+  }
+
+  /**
+   * Destroy instance and release resources
+   */
+  destroy() {
+    if (this.destroyed) return;
+    this.destroyed = true;
+
+    this.stopOutput?.();
+    this.off('OutputProgress');
+    this.off('error');
+
+    // Clean up Pixi.js resources
+    if (this.pixiApp != null) {
+      try {
+        const anyApp = this.pixiApp as any;
+        // Check if already destroyed
+        if (anyApp.destroyed === true) {
+          this.pixiApp = null;
+          return;
+        }
+        // Stop ticker if present
+        if (anyApp.ticker && typeof anyApp.ticker.stop === 'function') {
+          try {
+            anyApp.ticker.stop();
+          } catch (e) {
+            // ignore
+          }
+        }
+        // Only destroy if renderer exists and context is not lost
+        if (anyApp.renderer != null) {
+          // Check if WebGL context is lost
+          const gl = anyApp.renderer.gl;
+          if (gl && gl.isContextLost()) {
+            // Context already lost, just clear reference
+            this.pixiApp = null;
+            return;
+          }
+          this.pixiApp.destroy();
+        }
+      } catch (err) {
+        // Swallow errors during destroy - context may be lost or already destroyed
+        // eslint-disable-next-line no-console
+        console.warn('Error while destroying Pixi application:', err);
+      } finally {
+        this.pixiApp = null;
+      }
+    }
+  }
+
+  private runEncoding(
+    muxer: ReturnType<typeof recodemux>,
+    maxTime: number,
+    {
+      onProgress,
+      onEnded,
+      onError,
+    }: {
+      onProgress: (prog: number) => void;
+      onEnded: () => Promise<void>;
+      onError: (err: Error) => void;
+    }
+  ): () => void {
+    let progress = 0;
+    const aborter = { aborted: false };
+    let err: Error | null = null;
+    let renderSprites: ReturnType<typeof createSpritesRender> | null = null;
+
+    const run = async () => {
+      const { fps, bgColor, audio: outputAudio } = this.opts;
+      const timeSlice = Math.round(1e6 / fps);
+
+      // Check if any sprites actually have video capabilities
+      const hasVideoSprites = this.sprites.some(
+        (sprite) => sprite.width > 0 && sprite.height > 0
+      );
+
+      renderSprites = createSpritesRender({
+        pixiApp: this.pixiApp,
+        bgColor,
+        sprites: this.sprites,
+        aborter,
+      });
+      const encodeFrame = createAVEncoder({
+        muxer,
+        canvas: this.canvas,
+        outputAudio,
+        hasVideoTrack: this.hasVideoTrack && hasVideoSprites,
+        timeSlice,
+        fps,
+      });
+
+      let timestamp = 0;
+      while (true) {
+        if (err != null) return;
+        if (
+          aborter.aborted ||
+          (maxTime === -1 ? false : timestamp > maxTime) ||
+          this.sprites.length === 0
+        ) {
+          exit();
+          await onEnded();
+          return;
+        }
+        progress = timestamp / maxTime;
+
+        const { audios, mainSprDone } = await renderSprites.render(timestamp);
+        if (mainSprDone) {
+          exit();
+          await onEnded();
+          return;
+        }
+
+        if (aborter.aborted) return;
+
+        // Ensure canvas rendering is complete before creating VideoFrame
+        // Use background-resilient sleep(0) which utilizes workerTimer
+        // to ensure rendering loop continues even when tab is inactive.
+        if (this.hasVideoTrack) {
+          await sleep(0);
+        }
+
+        encodeFrame(timestamp, audios, true);
+
+        timestamp += timeSlice;
+
+        await waitEncoderQueue(muxer.getEncodeQueueSize);
+      }
+    };
+
+    const exit = () => {
+      if (aborter.aborted) return;
+      aborter.aborted = true;
+      clearInterval(progressTimer);
+      // Clean up sprite renderers first (removes sprites from Pixi stage)
+      if (renderSprites != null) {
+        renderSprites.cleanup();
+      }
+      // Then destroy all sprites
+      this.sprites.forEach((it) => {
+        it.destroy();
+      });
+    };
+
+    run().catch((e) => {
+      err = e;
+      this.logger.error(e);
+      exit();
+      onError(e);
+    });
+
+    const progressTimer = setInterval(() => {
+      onProgress(progress);
+    }, 500);
+
+    return exit;
+  }
+
+  /**
+   * Export current compositor state to JSON
+   */
+  exportToJSON(): ProjectJSON {
+    const clips: ClipJSON[] = this.sprites.map((sprite) => {
+      return clipToJSON(sprite, sprite.main);
+    });
+
+    const transitions: TransitionJSON[] = [];
+
+    this.sprites.forEach((clip) => {
+      if (clip.transition) {
+        // Find predecessor on the same "track" (same zIndex)
+        const prevClip = this.sprites
+          .filter(
+            (c) =>
+              c.id !== clip.id &&
+              c.zIndex === clip.zIndex &&
+              c.display.from < clip.display.from &&
+              (c instanceof Video || c instanceof Image)
+          )
+          .sort((a, b) => b.display.to - a.display.to)[0];
+
+        if (prevClip) {
+          transitions.push({
+            key: clip.transition.name,
+            duration: clip.transition.duration,
+            clips: [prevClip.id, clip.id],
+          });
+        }
+      }
+    });
+
+    return {
+      clips,
+      settings: {
+        width: this.opts.width,
+        height: this.opts.height,
+        fps: this.opts.fps,
+        bgColor: this.opts.bgColor,
+        format: this.opts.format,
+        videoCodec: this.opts.videoCodec,
+        bitrate: this.opts.bitrate,
+        audio: this.opts.audio,
+        audioCodec: this.opts.audioCodec,
+        audioSampleRate: this.opts.audioSampleRate,
+        metaDataTags: this.opts.metaDataTags,
+      },
+    };
+  }
+
+  /**
+   * Load clips from JSON
+   * @param json The JSON project data
+   */
+  async loadFromJSON(json: ProjectJSON): Promise<void> {
+    // Clear existing sprites
+    this.sprites.forEach((sprite) => {
+      sprite.destroy();
+    });
+    this.sprites = [];
+
+    // Update settings if provided
+    if (json.settings) {
+      if (json.settings.width !== undefined)
+        this.opts.width = json.settings.width;
+      if (json.settings.height !== undefined)
+        this.opts.height = json.settings.height;
+      if (json.settings.fps !== undefined) this.opts.fps = json.settings.fps;
+      if (json.settings.bgColor !== undefined)
+        this.opts.bgColor = json.settings.bgColor;
+      if (json.settings.format !== undefined)
+        this.opts.format = json.settings.format;
+      if (json.settings.videoCodec !== undefined)
+        this.opts.videoCodec = json.settings.videoCodec;
+      if (json.settings.bitrate !== undefined)
+        this.opts.bitrate = json.settings.bitrate;
+      if (json.settings.audio !== undefined) {
+        this.opts.audio =
+          json.settings.audio === false ? false : (undefined as any);
+      }
+      if (json.settings.audioCodec !== undefined)
+        this.opts.audioCodec = json.settings.audioCodec;
+      if (json.settings.audioSampleRate !== undefined)
+        this.opts.audioSampleRate = json.settings.audioSampleRate;
+      if (json.settings.metaDataTags !== undefined)
+        this.opts.metaDataTags = json.settings.metaDataTags;
+    }
+
+    // Load all clips
+    for (const clipJSON of json.clips) {
+      const clip = await jsonToClip(clipJSON);
+      await this.addSprite(clip, { main: clipJSON.main || false });
+    }
+  }
+
+  /**
+   * Renders the frame at the given time and returns it as a base64-encoded PNG.
+   *
+   * Initialises the internal Pixi application on demand (if not already
+   * initialised), performs a single-frame render using the same sprite
+   * pipeline as {@link output}, and returns the result without modifying
+   * the compositor's encoding state.
+   *
+   * @param timeMs Time in milliseconds
+   * @returns Base64 data-URL string (e.g. "data:image/png;base64,...")
+   *
+   * @example
+   * const compositor = new Compositor({ width: 1280, height: 720 });
+   * await compositor.addSprite(videoClip);
+   * const frame = await compositor.renderFrame(2000); // frame at 2 s
+   */
+  public async renderFrame(timeMs: number): Promise<string> {
+    if (this.destroyed) {
+      throw new Error('Compositor has been destroyed.');
+    }
+
+    // Lazily initialise Pixi so callers don't have to call initPixiApp() first
+    if (this.pixiApp == null) {
+      await this.initPixiApp();
+    }
+
+    if (this.pixiApp == null) {
+      throw new Error(
+        'Compositor Pixi application could not be initialised. ' +
+          'Ensure width and height are greater than 0.'
+      );
+    }
+
+    // Convert milliseconds → microseconds (internal timeline unit)
+    const timeUs = timeMs * 1000;
+
+    // Use the same rendering pipeline as the encoder, but for a single frame.
+    // Sprites must NOT be marked expired before this call — use a fresh aborter.
+    const spriteRender = createSpritesRender({
+      pixiApp: this.pixiApp,
+      bgColor: this.opts.bgColor,
+      sprites: this.sprites,
+      aborter: { aborted: false },
+    });
+
+    try {
+      await spriteRender.render(timeUs);
+    } finally {
+      // Clean up temporary containers / renderers created by createSpritesRender
+      spriteRender.cleanup();
+    }
+
+    // Extract the rendered frame from the Pixi stage as a base64 PNG
+    const base64 = await (this.pixiApp.renderer.extract as any).base64(
+      this.pixiApp.stage,
+      'image/png',
+      1
+    );
+
+    return base64;
+  }
+}
+
+function createSpritesRender(opts: {
+  pixiApp: Application | null;
+  bgColor: string;
+  sprites: Array<IClip & { main: boolean; expired: boolean }>;
+  aborter: { aborted: boolean };
+}): {
+  render: (timestamp: number) => Promise<{
+    audios: Float32Array[][];
+    mainSprDone: boolean;
+    hasVideo: boolean;
+  }>;
+  cleanup: () => void;
+} {
+  const { pixiApp, sprites, aborter } = opts;
+  const hasVideoTrack = pixiApp != null;
+
+  // if (pixiApp) {
+  //   pixiApp.renderer.background.color = bgColor;
+  // }
+
+  // Map to store PixiSpriteRenderer instances for each clip (only for video)
+  const spriteRenderers = new Map<
+    IClip & { main: boolean; expired: boolean },
+    PixiSpriteRenderer
+  >();
+
+  // Transition state
+  const transitionRenderers = new Map<
+    string,
+    ReturnType<typeof makeTransition>
+  >();
+  const transitionSprites = new Map<string, Sprite>();
+  const transFromTexture = RenderTexture.create({
+    width: pixiApp?.renderer.width || 0,
+    height: pixiApp?.renderer.height || 0,
+  });
+  const transToTexture = RenderTexture.create({
+    width: pixiApp?.renderer.width || 0,
+    height: pixiApp?.renderer.height || 0,
+  });
+  const transBgGraphics = new Graphics()
+    .rect(0, 0, pixiApp?.renderer.width || 0, pixiApp?.renderer.height || 0)
+    .fill({ color: 0x000000 });
+
+  // Create filters cache - cache both the filter and the render function
+  const effectCache = new Map<
+    string,
+    { filter: Filter; render: (opts: any) => Texture }
+  >();
+  const getClipFrameAtTimestamp = async (
+    clip: IClip,
+    timestamp: number,
+    getFrameCached: (clip: IClip, timestamp: number) => Promise<any>
+  ) => {
+    const relTime = Math.max(
+      0,
+      Math.min(timestamp - clip.display.from, clip.duration)
+    );
+    // Ensure animation state is updated for the sampled timestamp
+    // This is critical for modular animations during transitions
+    clip.animate(relTime * clip.playbackRate);
+
+    const { video } = await getFrameCached(clip, relTime);
+    return video;
+  };
+
+  const renderClipToTransitionTexture = (
+    clip: IClip,
+    frame: ImageBitmap | Texture,
+    target: RenderTexture
+  ) => {
+    if (!pixiApp) return;
+
+    const style = (clip as any).style || {};
+    const { renderTransform } = clip;
+    const isMirrored = (renderTransform?.mirror ?? 0) > 0.5;
+
+    const tex = frame instanceof Texture ? frame : Texture.from(frame);
+
+    const xOffset = renderTransform?.x ?? 0;
+    const yOffset = renderTransform?.y ?? 0;
+    const angleOffset = renderTransform?.angle ?? 0;
+    const scaleMultiplier = renderTransform?.scale ?? 1;
+    const scaleXMultiplier = renderTransform?.scaleX ?? 1;
+    const scaleYMultiplier = renderTransform?.scaleY ?? 1;
+    const opacityMultiplier = renderTransform?.opacity ?? 1;
+    const blurOffset = renderTransform?.blur ?? 0;
+    const brightnessMultiplier = renderTransform?.brightness ?? 1;
+
+    const textureWidth = tex.width || 1;
+    const textureHeight = tex.height || 1;
+
+    const isCaption = (clip as any).type === 'Caption';
+
+    const baseScaleX =
+      !isCaption && clip.width && clip.width !== 0
+        ? Math.abs(clip.width) / textureWidth
+        : 1;
+    const baseScaleY =
+      !isCaption && clip.height && clip.height !== 0
+        ? Math.abs(clip.height) / textureHeight
+        : 1;
+
+    const combinedScaleX = baseScaleX * scaleMultiplier * scaleXMultiplier;
+    const combinedScaleY = baseScaleY * scaleMultiplier * scaleYMultiplier;
+
+    // Create a root container that holds everything
+    const rootContainer = new Container();
+    rootContainer.x = clip.center.x + xOffset;
+    rootContainer.y = clip.center.y + yOffset;
+    rootContainer.rotation =
+      ((clip.flip == null ? 1 : -1) * ((clip.angle + angleOffset) * Math.PI)) /
+      180;
+    rootContainer.alpha = clip.opacity * opacityMultiplier;
+
+    // Create the main sprite
+    const tempSprite = new Sprite(tex);
+    tempSprite.anchor.set(0.5, 0.5);
+
+    let mirrorSprites: Sprite[] = [];
+
+    if (isMirrored) {
+      // True reflection: original at normal position, mirrors on all sides
+      const sX = combinedScaleX;
+      const sY = combinedScaleY;
+      const scaledW = textureWidth * sX;
+      const scaledH = textureHeight * sY;
+
+      // Original sprite at normal position
+      tempSprite.position.set(0, 0);
+      tempSprite.scale.set(sX, sY);
+
+      // Mirror layout: [dx, dy, scaleX, scaleY]
+      const mirrors: [number, number, number, number][] = [
+        [scaledW, 0, -sX, sY], // right
+        [-scaledW, 0, -sX, sY], // left
+        [0, scaledH, sX, -sY], // bottom
+        [0, -scaledH, sX, -sY], // top
+        [scaledW, scaledH, -sX, -sY], // bottom-right
+        [-scaledW, scaledH, -sX, -sY], // bottom-left
+        [scaledW, -scaledH, -sX, -sY], // top-right
+        [-scaledW, -scaledH, -sX, -sY], // top-left
+      ];
+
+      for (const [dx, dy, sx, sy] of mirrors) {
+        const ms = new Sprite(tex);
+        ms.anchor.set(0.5, 0.5);
+        ms.position.set(dx, dy);
+        ms.scale.set(sx, sy);
+        mirrorSprites.push(ms);
+      }
+
+      // Apply flip
+      if (clip.flip?.x) {
+        tempSprite.scale.x = -sX;
+        for (let i = 0; i < 8; i++) {
+          mirrorSprites[i].scale.x = -mirrors[i][2];
+        }
+      } 
+      if (clip.flip?.y) {
+        tempSprite.scale.y = -sY;
+        for (let i = 0; i < 8; i++) {
+          mirrorSprites[i].scale.y = -mirrors[i][3];
+        }
+      }
+
+      rootContainer.addChild(tempSprite);
+      for (const ms of mirrorSprites) {
+        rootContainer.addChild(ms);
+      }
+    } else {
+      // Standard single sprite
+      if (clip.flip?.x) {
+        tempSprite.scale.x = -combinedScaleX;
+        tempSprite.scale.y = combinedScaleY;
+      } else if (clip.flip?.y) {
+        tempSprite.scale.x = combinedScaleX;
+        tempSprite.scale.y = -combinedScaleY;
+      } else {
+        tempSprite.scale.x = combinedScaleX;
+        tempSprite.scale.y = combinedScaleY;
+      }
+      rootContainer.addChild(tempSprite);
+    }
+
+    // Apply Filters
+    const filters: any[] = [];
+    if (blurOffset > 0) {
+      const blurFilter = new BlurFilter();
+      blurFilter.strength = blurOffset;
+      blurFilter.quality = 4;
+      (blurFilter as any).repeatEdgePixels = true;
+      filters.push(blurFilter);
+    }
+
+    const hasClipColorAdjustment = hasColorAdjustment(
+      (clip as any).colorAdjustment
+    );
+    if (brightnessMultiplier !== 1 || hasClipColorAdjustment) {
+      const brightnessFilter = new ColorMatrixFilter();
+      applyColorAdjustmentToMatrix(
+        brightnessFilter,
+        (clip as any).colorAdjustment,
+        brightnessMultiplier
+      );
+      filters.push(brightnessFilter);
+    }
+
+    const activeSelectiveHslList = getAllSelectiveHsl(
+      (clip as any).colorAdjustment
+    );
+    for (let i = 0; i < activeSelectiveHslList.length; i++) {
+      const activeSelectiveHsl = activeSelectiveHslList[i];
+      const hslUniforms = new UniformGroup({
+        uTargetColor: { value: [1, 1, 0], type: 'vec3<f32>' },
+        uHueShift: { value: activeSelectiveHsl.hue, type: 'f32' },
+        uSatShift: { value: activeSelectiveHsl.saturation / 100, type: 'f32' },
+        uLightShift: { value: activeSelectiveHsl.lightness / 100, type: 'f32' },
+        uTolerance: { value: 0.22, type: 'f32' },
+        uSoftness: { value: 0.12, type: 'f32' },
+      });
+      const rgb = hexToRgb(activeSelectiveHsl.targetColor);
+      if (rgb) {
+        hslUniforms.uniforms.uTargetColor[0] = rgb.r / 255;
+        hslUniforms.uniforms.uTargetColor[1] = rgb.g / 255;
+        hslUniforms.uniforms.uTargetColor[2] = rgb.b / 255;
+      }
+      const selectiveHslFilter = new Filter({
+        glProgram: new GlProgram({
+          vertex,
+          fragment: SELECTIVE_HSL_FRAGMENT,
+          name: `SelectiveHslShader_${i}`,
+        }),
+        resources: { hslUniforms },
+      });
+      filters.push(selectiveHslFilter);
+    }
+
+    if (clip.chromaKey && clip.chromaKey.enabled) {
+      const chromaUniforms = new UniformGroup({
+        uKeyColor: { value: [0, 1, 0], type: 'vec3<f32>' },
+        uSimilarity: { value: 0.1, type: 'f32' },
+        uSpill: { value: 0.0, type: 'f32' },
+      });
+
+      const rgb = hexToRgb(clip.chromaKey.color);
+      if (rgb) {
+        chromaUniforms.uniforms.uKeyColor[0] = rgb.r / 255;
+        chromaUniforms.uniforms.uKeyColor[1] = rgb.g / 255;
+        chromaUniforms.uniforms.uKeyColor[2] = rgb.b / 255;
+      }
+      chromaUniforms.uniforms.uSimilarity = clip.chromaKey.similarity;
+      chromaUniforms.uniforms.uSpill = clip.chromaKey.spill;
+
+      const chromaFilter = new Filter({
+        glProgram: new GlProgram({
+          vertex,
+          fragment: CHROMA_KEY_FRAGMENT,
+          name: 'ChromaKeyShader',
+        }),
+        resources: {
+          chromaUniforms,
+        },
+      });
+      filters.push(chromaFilter);
+    }
+
+    rootContainer.filters = filters;
+
+    // Apply Styles (Border Radius, Stroke, Shadow)
+    const borderRadius = style.borderRadius || 0;
+    let maskGraphics: Graphics | null = null;
+    if (borderRadius > 0) {
+      maskGraphics = new Graphics();
+      maskGraphics.roundRect(
+        -textureWidth / 2,
+        -textureHeight / 2,
+        textureWidth,
+        textureHeight,
+        Math.min(borderRadius, textureWidth / 2, textureHeight / 2)
+      );
+      maskGraphics.fill({ color: 0xffffff, alpha: 1 });
+      tempSprite.addChild(maskGraphics);
+      tempSprite.mask = maskGraphics;
+    }
+
+    const stroke = style.stroke;
+    let strokeGraphics: Graphics | null = null;
+    if (stroke && stroke.width > 0) {
+      strokeGraphics = new Graphics();
+      const color = parseColor(stroke.color) ?? 0xffffff;
+      strokeGraphics.setStrokeStyle({
+        width: stroke.width,
+        color: color,
+        alignment: 1,
+      });
+
+      if (borderRadius > 0) {
+        const r = Math.min(borderRadius, textureWidth / 2, textureHeight / 2);
+        strokeGraphics.roundRect(
+          -textureWidth / 2,
+          -textureHeight / 2,
+          textureWidth,
+          textureHeight,
+          r
+        );
+      } else {
+        strokeGraphics.rect(
+          -textureWidth / 2,
+          -textureHeight / 2,
+          textureWidth,
+          textureHeight
+        );
+      }
+      strokeGraphics.stroke();
+      tempSprite.addChild(strokeGraphics);
+    }
+
+    const shadow = style.dropShadow;
+    let shadowGraphics: Graphics | null = null;
+    if (shadow && (shadow.blur > 0 || shadow.distance > 0)) {
+      shadowGraphics = new Graphics();
+      const color = parseColor(shadow.color) ?? 0x000000;
+      const alpha = shadow.alpha ?? 0.5;
+      const distance = shadow.distance ?? 0;
+      const angle = shadow.angle ?? 0;
+
+      const dx = Math.cos(angle) * distance;
+      const dy = Math.sin(angle) * distance;
+
+      if (borderRadius > 0) {
+        const r = Math.min(borderRadius, textureWidth / 2, textureHeight / 2);
+        shadowGraphics.roundRect(
+          -textureWidth / 2 + dx,
+          -textureHeight / 2 + dy,
+          textureWidth,
+          textureHeight,
+          r
+        );
+      } else {
+        shadowGraphics.rect(
+          -textureWidth / 2 + dx,
+          -textureHeight / 2 + dy,
+          textureWidth,
+          textureHeight
+        );
+      }
+      shadowGraphics.fill({ color, alpha });
+      rootContainer.addChildAt(shadowGraphics, 0);
+    }
+
+    pixiApp.renderer.render({
+      container: rootContainer,
+      target: target,
+      clear: true,
+    });
+
+    if (!(frame instanceof Texture)) {
+      tempSprite.texture.destroy(true);
+    }
+    if (strokeGraphics) strokeGraphics.destroy();
+    if (maskGraphics) maskGraphics.destroy();
+    if (shadowGraphics) shadowGraphics.destroy();
+    for (const ms of mirrorSprites) ms.destroy();
+    tempSprite.destroy();
+    rootContainer.destroy();
+  };
+
+  // Containers for global effect rendering and transitions
+  let clipsEffectContainer: Container | null = null;
+  let clipsNormalContainer: Container | null = null;
+  let postProcessContainer: Container | null = null;
+
+  if (hasVideoTrack && pixiApp != null) {
+    clipsEffectContainer = new Container();
+    clipsNormalContainer = new Container();
+    postProcessContainer = new Container();
+
+    clipsNormalContainer.sortableChildren = true;
+    postProcessContainer.sortableChildren = true;
+
+    pixiApp.stage.addChild(clipsNormalContainer);
+    pixiApp.stage.addChild(postProcessContainer);
+    clipsEffectContainer.visible = false;
+    pixiApp.stage.addChild(clipsEffectContainer);
+  }
+
+  // Pre-sort sprites once as they don't change during encoding
+  const sortedSprites = [...sprites].sort((a, b) => a.zIndex - b.zIndex);
+
+  const render = async (timestamp: number) => {
+    const audios: Float32Array[][] = [];
+    let mainSprDone = false;
+    let hasVideo = false;
+
+    // Cache to store getFrame results for each clip at the current timestamp
+    // This prevents redundant getFrame calls (e.g., during transitions)
+    // which can cause audio choppiness if the underlying source advances on each call.
+    const frameCache = new Map<
+      IClip,
+      { video: any; audio: Float32Array[]; done: boolean }
+    >();
+
+    const getFrameCached = async (sprite: IClip, relTime: number) => {
+      if (frameCache.has(sprite)) return frameCache.get(sprite)!;
+      const res = await sprite.getFrame(relTime);
+      frameCache.set(sprite, res);
+      return res;
+    };
+
+    // Reset all transition sprites for each frame
+    for (const sprite of transitionSprites.values()) {
+      sprite.visible = false;
+    }
+
+    if (hasVideoTrack && pixiApp != null) {
+      // Make sure we clear stage (or the containers) if needed
+      // Actually we just reuse them and update children
+    }
+
+    for (const sprite of sortedSprites) {
+      if (aborter.aborted) break;
+      if (timestamp < sprite.display.from || sprite.expired) {
+        // Even if expired, we might need to hide renderer
+        if (hasVideoTrack && pixiApp != null) {
+          const renderer = spriteRenderers.get(sprite);
+          if (renderer) {
+            await renderer.updateFrame(null);
+          }
+        }
+        continue;
+      }
+
+      const relativeTime = timestamp - sprite.display.from;
+      const spriteTime = relativeTime * sprite.playbackRate;
+
+      // Update sprite animation properties FIRST
+      // This updates rect.x, rect.y, rect.angle, opacity, etc. based on animation keyframes
+      sprite.animate(spriteTime);
+
+      // Get video frame and audio from sprite (using cache)
+      const { video, audio, done } = await getFrameCached(sprite, relativeTime);
+
+      // Process audio
+      audios.push(audio);
+
+      // Handle video rendering if we have a Pixi app
+      if (hasVideoTrack && pixiApp != null && clipsNormalContainer != null) {
+        if (sprite instanceof Transition) {
+          const fromClip = sprites.find((s) => s.id === sprite.fromClipId);
+          const toClip = sprites.find((s) => s.id === sprite.toClipId);
+
+          if (fromClip && toClip) {
+            const relativeTime = timestamp - sprite.display.from;
+
+            if (relativeTime >= sprite.duration) {
+              sprite.expired = true;
+
+              const transSprite = transitionSprites.get(sprite.id);
+              if (transSprite) {
+                transSprite.visible = false;
+              }
+            } else {
+              const fromFrame = await getClipFrameAtTimestamp(
+                fromClip,
+                timestamp,
+                getFrameCached
+              );
+              const toFrame = await getClipFrameAtTimestamp(
+                toClip,
+                timestamp,
+                getFrameCached
+              );
+
+              if (fromFrame && toFrame) {
+                const progress = Math.min(
+                  Math.max(relativeTime / sprite.duration, 0),
+                  1
+                );
+
+                renderClipToTransitionTexture(
+                  fromClip,
+                  fromFrame,
+                  transFromTexture
+                );
+                renderClipToTransitionTexture(toClip, toFrame, transToTexture);
+
+                let transRenderer = transitionRenderers.get(sprite.id);
+                if (!transRenderer) {
+                  transRenderer = makeTransition({
+                    name: sprite.transitionEffect.key,
+                    renderer: pixiApp.renderer,
+                  });
+                  transitionRenderers.set(sprite.id, transRenderer);
+                }
+
+                const transTexture = transRenderer.render({
+                  width: pixiApp.renderer.width,
+                  height: pixiApp.renderer.height,
+                  from: transFromTexture,
+                  to: transToTexture,
+                  progress,
+                });
+
+                let transSprite = transitionSprites.get(sprite.id);
+                if (!transSprite) {
+                  transSprite = new Sprite();
+                  transSprite.label = `TransitionSprite_${sprite.id}`;
+                  transitionSprites.set(sprite.id, transSprite);
+                  clipsNormalContainer.addChild(transSprite);
+                }
+
+                transSprite.texture = transTexture;
+                transSprite.visible = true;
+                transSprite.x = 0;
+                transSprite.y = 0;
+                transSprite.width = pixiApp.renderer.width;
+                transSprite.height = pixiApp.renderer.height;
+                transSprite.anchor.set(0, 0);
+                transSprite.zIndex = sprite.zIndex;
+
+                hasVideo = true;
+
+                const fromRenderer = spriteRenderers.get(fromClip as any);
+                if (fromRenderer) {
+                  const root = fromRenderer.getRoot();
+                  if (root) root.visible = false;
+                }
+
+                const toRenderer = spriteRenderers.get(toClip as any);
+                if (toRenderer) {
+                  const root = toRenderer.getRoot();
+                  if (root) root.visible = false;
+                }
+                continue;
+              }
+            }
+          }
+        }
+
+        let renderer = spriteRenderers.get(sprite);
+        if (renderer == null && video != null) {
+          renderer = new PixiSpriteRenderer(
+            pixiApp,
+            sprite,
+            clipsNormalContainer
+          );
+          spriteRenderers.set(sprite, renderer);
+        }
+
+        if (renderer != null) {
+          const root = renderer.getRoot();
+          if (video != null) {
+            hasVideo = true;
+            if (root) root.visible = true;
+            await renderer.updateFrame(video);
+          } else {
+            if (root) root.visible = false;
+            await renderer.updateFrame(null);
+          }
+
+          renderer.updateTransforms();
+        }
+      }
+
+      // Check if sprite is done or expired
+
+      if ((sprite.duration > 0 && relativeTime > sprite.duration) || done) {
+        if (sprite.main) mainSprDone = true;
+
+        // Mark as expired but DON'T destroy yet
+        sprite.expired = true;
+
+        // Clean up renderer if it exists
+        if (hasVideoTrack) {
+          const renderer = spriteRenderers.get(sprite);
+          if (renderer != null) {
+            const root = renderer.getRoot();
+            if (root) root.visible = false;
+          }
+        }
+      } else if (hasVideoTrack) {
+        // Update transforms in case sprite properties changed
+        const renderer = spriteRenderers.get(sprite);
+        if (renderer != null) {
+          renderer.updateTransforms();
+        }
+      }
+    }
+
+    // Handle Global Effects rendering
+    if (
+      hasVideoTrack &&
+      pixiApp != null &&
+      clipsEffectContainer != null &&
+      clipsNormalContainer != null &&
+      postProcessContainer != null
+    ) {
+      // 1. Collect all active global and adjustment layer effects
+      const activeGlobalEffects: Array<{
+        id: string;
+        key: string;
+        startTime: number;
+        duration: number;
+        zIndex: number;
+        values?: Record<string, any>;
+      }> = [];
+
+      for (const sprite of sprites) {
+        if (sprite instanceof Effect) {
+          if (
+            timestamp >= sprite.display.from &&
+            timestamp < sprite.display.from + sprite.duration
+          ) {
+            activeGlobalEffects.push({
+              id: sprite.id,
+              key: (sprite as Effect).effect.key,
+              startTime: sprite.display.from,
+              duration: sprite.duration,
+              zIndex: sprite.zIndex,
+              values: (sprite as Effect).effect.values,
+            });
+          }
+        }
+
+        // Check for attached effects (legacy)
+        if (sprite.effects && sprite.effects.length > 0) {
+          for (const effect of sprite.effects) {
+            if (
+              timestamp >= effect.startTime &&
+              timestamp < effect.startTime + effect.duration
+            ) {
+              // Attached effects use the clip's zIndex for sorting
+              activeGlobalEffects.push({
+                ...effect,
+                zIndex: sprite.zIndex,
+              });
+            }
+          }
+        }
+      }
+
+      // 2. Sort effects bottom-up by zIndex
+      activeGlobalEffects.sort((a, b) => a.zIndex - b.zIndex);
+
+      // Clean post process container
+      postProcessContainer.removeChildren();
+
+      // Reset all clips to normal container first
+      for (const renderer of spriteRenderers.values()) {
+        const root = renderer.getRoot();
+        if (root && root.parent !== clipsNormalContainer) {
+          if (root.parent) (root.parent as Container).removeChild(root);
+          clipsNormalContainer.addChild(root);
+        }
+      }
+
+      if (activeGlobalEffects.length > 0) {
+        const width = pixiApp.renderer.width;
+        const height = pixiApp.renderer.height;
+
+        let lastResultTexture: Texture | null = null;
+        const processedClips = new Set<string>();
+        const intermediateTextures: RenderTexture[] = [];
+
+        for (const effect of activeGlobalEffects) {
+          const { key, startTime, duration, id, zIndex } = effect;
+          const elapsed = timestamp - startTime;
+          const progress =
+            duration > 0 ? Math.min(Math.max(elapsed / duration, 0), 1) : 0;
+
+          // Check if this is an Adjustment Layer Effect
+          const isAdjustmentLayer = sprites.some(
+            (s) => s.id === id && s instanceof Effect
+          );
+
+          clipsEffectContainer.removeChildren();
+
+          // If we have a previous result, add it bottom-most
+          if (lastResultTexture) {
+            const prevSprite = new Sprite(lastResultTexture);
+            prevSprite.width = width;
+            prevSprite.height = height;
+            clipsEffectContainer.addChild(prevSprite);
+          }
+
+          // Move affected clips that are BELOW this effect layer
+          for (const sprite of sprites) {
+            if (processedClips.has(sprite.id)) continue;
+
+            let shouldApply = false;
+            if (isAdjustmentLayer) {
+              // Apply to clips below this effect's zIndex
+              shouldApply = sprite.id !== id && sprite.zIndex < zIndex;
+            } else {
+              // Legacy attached effect
+              shouldApply =
+                !!sprite.effects && sprite.effects.some((e) => e.id === id);
+            }
+
+            if (shouldApply) {
+              const renderer = spriteRenderers.get(sprite);
+              if (renderer) {
+                const root = renderer.getRoot();
+                if (root) {
+                  if (root.parent) (root.parent as Container).removeChild(root);
+                  clipsEffectContainer.addChild(root);
+                  processedClips.add(sprite.id);
+                }
+              }
+
+              // Also check for Transition Sprite
+              const transSprite = transitionSprites.get(sprite.id);
+              if (transSprite) {
+                if (transSprite.parent)
+                  (transSprite.parent as Container).removeChild(transSprite);
+                clipsEffectContainer.addChild(transSprite);
+                processedClips.add(sprite.id);
+              }
+            }
+          }
+
+          if (clipsEffectContainer.children.length > 0) {
+            let effectCached = effectCache.get(id);
+            if (!effectCached) {
+              try {
+                const res = await makeEffect({
+                  name: key as any,
+                  renderer: pixiApp.renderer,
+                  values: effect.values,
+                });
+                if (res && res.filter) {
+                  effectCached = { filter: res.filter, render: res.render };
+                  effectCache.set(id, effectCached);
+                }
+              } catch (e) {
+                console.warn('Failed to create effect', key, e);
+              }
+            }
+
+            if (effectCached) {
+              const { filter, render } = effectCached;
+              if (filter.resources && filter.resources.effectUniforms) {
+                filter.resources.effectUniforms.uniforms.uTime = progress;
+              }
+
+              const inputTexture = RenderTexture.create({ width, height });
+              intermediateTextures.push(inputTexture);
+
+              clipsEffectContainer.visible = true;
+              pixiApp.renderer.render({
+                container: clipsEffectContainer,
+                target: inputTexture,
+                clear: true,
+              });
+              clipsEffectContainer.visible = false;
+
+              if (render) {
+                const resultTexture = render({
+                  canvasTexture: inputTexture,
+                  progress,
+                  width,
+                  height,
+                });
+                lastResultTexture = resultTexture;
+              }
+            }
+          }
+        }
+
+        if (lastResultTexture) {
+          const resultSprite = new Sprite(lastResultTexture);
+          resultSprite.width = width;
+          resultSprite.height = height;
+          postProcessContainer.addChild(resultSprite);
+        }
+
+        // Cleanup intermediate textures to avoid memory leaks
+        for (const tex of intermediateTextures) {
+          tex.destroy(true);
+        }
+      }
+    }
+
+    // Render the entire Pixi.js scene (only if we have video track and app is ready)
+    if (hasVideoTrack && pixiApp != null) {
+      pixiApp.render();
+    }
+
+    return {
+      audios,
+      mainSprDone,
+      hasVideo,
+    };
+  };
+
+  const cleanup = () => {
+    // Clean up transition resources
+    if (transFromTexture) transFromTexture.destroy(true);
+    if (transToTexture) transToTexture.destroy(true);
+    if (transBgGraphics) transBgGraphics.destroy(true);
+    for (const sprite of transitionSprites.values()) {
+      sprite.destroy();
+    }
+    transitionSprites.clear();
+    transitionRenderers.clear();
+
+    // Clean up containers
+    if (clipsEffectContainer) clipsEffectContainer.destroy({ children: true });
+    if (clipsNormalContainer) clipsNormalContainer.destroy({ children: true });
+    if (postProcessContainer) postProcessContainer.destroy({ children: true });
+
+    // Clean up all sprite renderers
+    spriteRenderers.forEach((renderer) => {
+      renderer.destroy();
+    });
+    spriteRenderers.clear();
+  };
+
+  return { render, cleanup };
+}
+
+function createAVEncoder(opts: {
+  muxer: ReturnType<typeof recodemux>;
+  canvas: OffscreenCanvas;
+  outputAudio?: boolean;
+  hasVideoTrack: boolean;
+  timeSlice: number;
+  fps: number;
+}) {
+  const { canvas, outputAudio, muxer, hasVideoTrack, timeSlice } = opts;
+  let frameCnt = 0;
+  // GOP size: 3 seconds
+  const gopSize = Math.floor(3 * opts.fps);
+
+  const audioTrackBuf = createAudioTrackBuf(1024);
+
+  return (timestamp: number, audios: Float32Array[][], hasVideo: boolean) => {
+    if (outputAudio !== false) {
+      for (const audioData of audioTrackBuf(timestamp, audios))
+        muxer.encodeAudio(audioData);
+    }
+
+    // Only encode video if we have video track AND we actually have video frames
+    if (hasVideoTrack && hasVideo) {
+      // Ensure canvas is in a valid state before creating VideoFrame
+      // The canvas must have been rendered to at least once
+      try {
+        const frame = new VideoFrame(canvas, {
+          duration: timeSlice,
+          timestamp: timestamp,
+        });
+
+        muxer.encodeVideo(frame, {
+          keyFrame: frameCnt % gopSize === 0,
+        });
+
+        frameCnt += 1;
+      } catch (err) {
+        // If canvas is not ready, skip this frame
+        // This can happen if the canvas hasn't been rendered to yet
+        console.warn(
+          'Failed to create VideoFrame from canvas, skipping frame:',
+          err
+        );
+      }
+    }
+  };
+}
+
+/**
+ * Buffer input data and convert to AudioData with fixed frame count
+ * @param framesPerChunk Number of audio frames per AudioData instance
+ */
+export function createAudioTrackBuf(framesPerChunk: number) {
+  const dataSize = framesPerChunk * DEFAULT_AUDIO_CONF.channelCount;
+  // PCM data buffer
+  const channelBuf = new Float32Array(dataSize * 3);
+  let writePos = 0;
+
+  let audioTimestamp = 0;
+  const chunkDuration = (framesPerChunk / DEFAULT_AUDIO_CONF.sampleRate) * 1e6;
+
+  // Placeholder when audio data is missing
+  const placeholderData = new Float32Array(dataSize);
+
+  const getAudioData = (timestamp: number) => {
+    let readPos = 0;
+    const chunkCount = Math.floor(writePos / dataSize);
+    const results: AudioData[] = [];
+    // Get data from buffer by specified frame count and construct AudioData
+    for (let i = 0; i < chunkCount; i++) {
+      results.push(
+        new AudioData({
+          timestamp: audioTimestamp,
+          numberOfChannels: DEFAULT_AUDIO_CONF.channelCount,
+          numberOfFrames: framesPerChunk,
+          sampleRate: DEFAULT_AUDIO_CONF.sampleRate,
+          format: 'f32',
+          data: channelBuf.subarray(readPos, readPos + dataSize),
+        })
+      );
+      readPos += dataSize;
+      audioTimestamp += chunkDuration;
+    }
+    channelBuf.set(channelBuf.subarray(readPos, writePos), 0);
+    writePos -= readPos;
+
+    // When existing audio data is insufficient, fill with placeholder
+    while (timestamp - audioTimestamp > chunkDuration) {
+      results.push(
+        new AudioData({
+          timestamp: audioTimestamp,
+          numberOfChannels: DEFAULT_AUDIO_CONF.channelCount,
+          numberOfFrames: framesPerChunk,
+          sampleRate: DEFAULT_AUDIO_CONF.sampleRate,
+          format: 'f32',
+          data: placeholderData,
+        })
+      );
+      audioTimestamp += chunkDuration;
+    }
+    return results;
+  };
+
+  return (timestamp: number, trackAudios: Float32Array[][]) => {
+    const maxLen = Math.max(...trackAudios.map((a) => a[0]?.length ?? 0));
+    for (let bufIdx = 0; bufIdx < maxLen; bufIdx++) {
+      let ch0 = 0;
+      let ch1 = 0;
+      for (let trackIdx = 0; trackIdx < trackAudios.length; trackIdx++) {
+        const c0 = trackAudios[trackIdx][0]?.[bufIdx] ?? 0;
+        // If mono PCM, duplicate first channel to second channel
+        const c1 = trackAudios[trackIdx][1]?.[bufIdx] ?? c0;
+        ch0 += c0;
+        ch1 += c1;
+      }
+      // Mix multiple track audio data and write to buffer
+      channelBuf[writePos] = ch0;
+      channelBuf[writePos + 1] = ch1;
+      writePos += 2;
+    }
+    // Consume buffer data and generate AudioData
+    return getAudioData(timestamp);
+  };
+}

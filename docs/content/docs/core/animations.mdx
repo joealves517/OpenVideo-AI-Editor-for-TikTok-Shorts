@@ -1,0 +1,96 @@
+---
+title: Animations
+description: Create dynamic motion in Core using the Command API.
+---
+
+Animations in OpenVideo Core are data-driven. Instead of calling methods on a clip object, you define the animation state within the clip's data and update it via commands.
+
+## Adding Animations
+
+To add an animation, use `core.clip.update` to modify the `animations` property of a clip.
+
+### Using Presets
+
+```ts
+import { core } from "@openvideo/core";
+
+// Apply a fadeIn animation
+core.clip.update(clipId, {
+  animations: [
+    {
+      id: "anim_1",
+      type: "fadeIn",
+      duration: 1_000_000, // 1 second
+      easing: "easeOutQuad"
+    }
+  ]
+});
+```
+
+### Custom Keyframes
+
+You can define complex motion by specifying property values at different percentages of the animation duration.
+
+```ts
+core.clip.update(clipId, {
+  animations: [
+    {
+      id: "motion_1",
+      type: "keyframes",
+      duration: 2_000_000,
+      keyframes: {
+        "0%": { opacity: 0, scale: 0.5 },
+        "50%": { opacity: 1, scale: 1.2 },
+        "100%": { scale: 1 }
+      }
+    }
+  ]
+});
+```
+
+## Managing Animations
+
+Since animations are just an array in the clip data, you can replace or clear them easily.
+
+### Replacing Animations
+
+```ts
+// Replace all existing animations with a new one
+core.clip.update(clipId, {
+  animations: [
+    { type: "slideIn", direction: "left", duration: 1e6 }
+  ]
+});
+```
+
+### Removing All Animations
+
+```ts
+core.clip.update(clipId, {
+  animations: []
+});
+```
+
+## Supported Easing Functions
+
+All standard easing functions are supported when defining animations:
+
+- `linear`
+- `easeInQuad`, `easeOutQuad`, `easeInOutQuad`
+- `easeInCubic`, `easeOutCubic`, `easeInOutCubic`
+- `easeInExpo`, `easeOutExpo`, `easeInOutExpo`
+- `easeInBack`, `easeOutBack`, `easeInOutBack`
+
+## Animatable Properties
+
+The following properties can be included in your keyframes:
+
+- `left`, `top` (Position)
+- `width`, `height` (Dimensions)
+- `opacity` (Transparency 0-1)
+- `angle` (Rotation in degrees)
+- `scale` (Size multiplier)
+
+---
+
+Next, learn about [Transitions](./transitions) between clips or how to listen for [Events](./events).

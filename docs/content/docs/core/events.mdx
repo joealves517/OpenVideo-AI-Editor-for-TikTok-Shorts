@@ -1,0 +1,83 @@
+---
+title: Events
+description: Listen to Core engine events and state changes.
+---
+
+OpenVideo Core provides a reactive event system that notifies you of playback changes and project state mutations. Since Core is command-driven, state changes are emitted as granular **patches**.
+
+## Engine Events
+
+The `core` instance implements an event emitter for high-level engine state.
+
+### Playback Events
+
+#### `timeupdate`
+Emitted during playback or when seeking. The payload is the current time in microseconds.
+
+```ts
+import { core } from "@openvideo/core";
+
+core.on("timeupdate", (time) => {
+  console.log("Current time (μs):", time);
+});
+```
+
+#### `play` / `pause`
+Emitted when the playback state changes.
+
+```ts
+core.on("play", () => {
+  console.log("Playback started");
+});
+
+core.on("pause", () => {
+  console.log("Playback paused");
+});
+```
+
+### State Changes
+
+#### `change`
+This is the most powerful event in Core. It is emitted whenever a command is executed, providing the resulting **patches**. This allows you to sync external state or build a real-time collaborative editor.
+
+```ts
+core.on("change", (patches) => {
+  console.log("State changed!", patches);
+  
+  // Patches follow a JSON-patch like structure:
+  // { op: 'update', path: '/clips/clip_1', value: { ... }, oldValue: { ... } }
+});
+```
+
+## Clip Events
+
+In the Core engine, clips are plain data objects within the store. To react to changes in a specific clip, you should listen to the `change` event on the engine and filter by the clip's path.
+
+```ts
+core.on("change", (patches) => {
+  const clipPatch = patches.find(p => p.path === `/clips/${myClipId}`);
+  if (clipPatch) {
+    console.log("My clip was updated:", clipPatch.value);
+  }
+});
+```
+
+## Best Practices
+
+### Reactive UI Integration
+If you are using a framework like React, you can subscribe to the `core.store` directly for reactive state updates, or use the `change` event to trigger re-renders only when specific parts of the state change.
+
+### Cleanup
+Always remove event listeners when they are no longer needed.
+
+```ts
+const onPlay = () => { /* ... */ };
+core.on("play", onPlay);
+
+// Later...
+core.off("play", onPlay);
+```
+
+---
+
+Next, learn about [Serialization](./serialization) or how the [Rendering](./rendering) pipeline works.

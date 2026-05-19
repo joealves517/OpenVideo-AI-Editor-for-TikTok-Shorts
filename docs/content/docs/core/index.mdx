@@ -1,0 +1,75 @@
+---
+title: Introduction
+description: Overview of the OpenVideo Video Editor SDK.
+---
+
+Welcome to the OpenVideo documentation! OpenVideo is a framework-agnostic video editor SDK built on the WebCodecs API. It is designed to be highly performant, deterministic, and AI-friendly.
+
+The SDK is divided into two main parts:
+
+1.  **OpenVideo Core**: The headless, command-driven engine that manages state, history, and the microsecond-based timeline.
+2.  **Pixi Renderer**: The visual interaction layer (Studio) that provides a canvas, real-time preview, and interactive controls.
+
+## Core (Command-Based)
+
+The Core engine is built for automation and AI. Instead of manipulating objects directly, you dispatch commands that result in atomic state changes.
+
+```ts
+import { core, nanoid } from "@openvideo/core";
+
+// Programmatic seek using the Command API
+core.execute({
+  id: nanoid(),
+  type: "playback.seek",
+  payload: { time: 5000000 }
+});
+```
+
+[Learn more about the Command API](./commands)
+
+## Pixi Renderer (Studio)
+
+The Pixi Renderer provides the visual "Studio" where users can interact with the video composition on a canvas.
+
+```ts
+import { Studio } from "openvideo";
+
+const studio = new Studio({
+  width: 1920,
+  height: 1080,
+  canvas: document.getElementById("canvas"),
+});
+
+await studio.ready;
+studio.play();
+```
+
+[Learn more about the Pixi Renderer](../pixi-renderer)
+
+## Core Concepts
+
+### Commands
+The primary way to interact with the engine. Descriptive intents that mutate state.
+
+### Clips
+The building blocks - video, image, text, and audio elements positioned on the timeline.
+
+### Timeline
+A precise, microsecond-based timeline (1 second = 1,000,000 µs) ensuring frame-accurate synchronization.
+
+### Rendering
+Export your video using the high-performance WebCodecs-based compositor or extract frames directly from the canvas.
+
+## Browser Support
+
+Built on **PixiJS (WebGL)** for rendering and **WebCodecs** for video export.
+
+| Browser | Version | WebGL | WebCodecs | Status         |
+| ------- | ------- | ----- | --------- | -------------- |
+| Chrome  | 94+     | ✅    | ✅        | Full support   |
+| Edge    | 94+     | ✅    | ✅        | Full support   |
+| Safari  | 16.4+   | ✅    | ✅        | Full support   |
+| Firefox | 100+    | ✅    | ⚠️        | Preview only* |
+
+\*Firefox has limited WebCodecs support. Preview works via WebGL, but video export may be limited.
+

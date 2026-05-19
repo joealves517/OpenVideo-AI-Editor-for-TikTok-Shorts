@@ -1,0 +1,25 @@
+{
+  "root": true,
+  "title": "Core (Headless)",
+  "pages": [
+    "index",
+    "commands",
+    "---Getting Started---",
+    "installation",
+    "basic-usage",
+    "---Timeline & Data---",
+    "clips",
+    "tracks",
+    "events",
+    "---Creative---",
+    "animations",
+    "transitions",
+    "effects",
+    "chroma-key",
+    "---Export & Serialization---",
+    "serialization",
+    "rendering",
+    "---Reference---",
+    "api-reference"
+  ]
+}

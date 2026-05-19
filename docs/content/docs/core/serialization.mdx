@@ -1,0 +1,78 @@
+---
+title: Serialization
+description: Save and restore project state in Core using JSON.
+---
+
+OpenVideo Core uses a deterministic state model that is easily serializable to JSON. This allows you to save projects to a database, share them between users, or send them to a server for headless rendering.
+
+## Exporting Project State
+
+To capture the current state of your project, use `core.project.export()`. This returns a plain JavaScript object containing all settings, tracks, and clips.
+
+```ts
+import { core } from "@openvideo/core";
+
+// Capture the project state
+const projectData = core.project.export();
+
+// The output is JSON-serializable
+const jsonString = JSON.stringify(projectData);
+localStorage.setItem("my-video-project", jsonString);
+```
+
+## Importing Project State
+
+To restore a project, use `core.project.import()`. This will reset the engine state and load the provided data.
+
+```ts
+// Retrieve the data
+const savedData = JSON.parse(localStorage.getItem("my-video-project"));
+
+if (savedData) {
+  // Load into the core engine
+  core.project.import(savedData);
+  console.log("Project state restored!");
+}
+```
+
+## JSON Structure
+
+The exported JSON follows the `IProject` interface:
+
+```ts
+{
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "duration": 30000000
+  },
+  "tracks": [
+    { "id": "track_1", "name": "Video Track", "clipIds": ["clip_1"] }
+  ],
+  "clips": {
+    "clip_1": { "id": "clip_1", "type": "Video", "src": "..." }
+  }
+}
+```
+
+## Server-Side Rendering
+
+The JSON produced by `core.project.export()` is identical to the format expected by the `Compositor`. You can send this state to a Node.js environment or a Web Worker for high-performance rendering.
+
+```ts
+import { Compositor } from "@openvideo/core";
+
+// On the server:
+const projectData = getProjectFromDB(projectId);
+const compositor = new Compositor(projectData.settings);
+
+// Import the state directly
+compositor.import(projectData);
+
+const stream = await compositor.output();
+```
+
+---
+
+Next, learn how the [Rendering](./rendering) pipeline works or explore the [Command API](./commands).

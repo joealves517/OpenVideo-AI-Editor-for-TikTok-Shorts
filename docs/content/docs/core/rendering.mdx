@@ -1,0 +1,83 @@
+---
+title: Rendering and Export
+description: Control playback and export video in Core.
+---
+
+OpenVideo Core provides a headless rendering pipeline. You can control the timeline playback via the `playback` controller or use the `Compositor` for high-performance video export.
+
+## Playback Control
+
+In Core, playback is managed by the `core.playback` controller. It emits timing events and handles the synchronization of clips.
+
+```ts
+import { core } from "@openvideo/core";
+
+// Start playback
+core.play();
+
+// Pause playback
+core.pause();
+
+// Seek to a specific time (microseconds)
+core.seek(1_500_000); // 1.5 seconds
+
+// Check playback state
+console.log(core.store.getState().isPlaying);
+```
+
+## The Compositor
+
+The `Compositor` is the primary engine for exporting video. It is a headless, WebGL-accelerated renderer that produces a video stream.
+
+### Basic Export
+
+```ts
+import { Compositor } from "@openvideo/core";
+
+// Initialize compositor with project settings
+const projectData = core.project.export();
+const compositor = new Compositor(projectData.settings);
+
+// Load the project data
+compositor.import(projectData);
+
+// Generate a ReadableStream of the encoded video
+const stream = await compositor.output();
+```
+
+### Frame Extraction
+
+You can extract individual frames from the `Compositor` without starting a full export. This is useful for thumbnails or AI processing.
+
+```ts
+// Capture the frame at t = 2s (2000 ms)
+const frameDataUrl = await compositor.renderFrame(2000);
+
+// "data:image/png;base64,..."
+console.log(frameDataUrl);
+```
+
+> [!NOTE]
+> `renderFrame` accepts time in **milliseconds**, whereas the core timeline uses **microseconds**.
+
+## Export Formats
+
+The `Compositor` supports multiple output formats depending on the environment:
+
+- **MP4**: H.264 / AAC encoding.
+- **WebM**: VP9 / Opus encoding.
+- **GIF**: For short animations.
+
+## Progress Tracking
+
+Monitor the export progress by listening to the `OutputProgress` event.
+
+```ts
+compositor.on("OutputProgress", (progress) => {
+  console.log(`Exporting: ${Math.round(progress * 100)}%`);
+});
+```
+
+---
+
+Next, learn how to manage [Serialization](./serialization) or explore the [API Reference](./api-reference).

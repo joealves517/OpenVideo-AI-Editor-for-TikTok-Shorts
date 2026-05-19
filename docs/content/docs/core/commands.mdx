@@ -1,0 +1,157 @@
+---
+title: Command API
+description: Headless, deterministic, and AI-friendly video editing.
+---
+
+OpenVideo Core is built on a **Command-Driven Architecture**. Instead of calling imperative methods that mutate state directly, you dispatch descriptive commands. This makes the engine perfectly suited for AI agents, multi-user collaboration, and robust undo/redo systems.
+
+## Why Command-Based?
+
+- **AI-Friendly**: Agents can easily generate JSON commands to perform complex edits.
+- **Atomic Changes**: Every edit is an atomic operation that generates a set of patches.
+- **Headless First**: The engine runs anywhere—Node.js, Web Workers, or the browser—without needing a DOM.
+- **Time Travel**: Built-in undo/redo history by tracking inverse patches.
+
+## The Command Structure
+
+A command is a plain JavaScript object describing an intent:
+
+```ts
+interface Command<T = any> {
+  id: string;      // Unique ID for the command (e.g., nanoid())
+  type: string;    // The command identifier (e.g., "clip.add")
+  payload: T;      // The data needed for the operation
+  meta?: {         // Optional metadata
+    source?: 'user' | 'agent' | 'system';
+    timestamp?: number;
+  };
+}
+```
+
+## Executing Commands
+
+The `core` engine provides a central method to execute commands.
+
+### execute()
+
+Runs a single command and updates the state.
+
+```ts
+import { core, nanoid } from "@openvideo/core";
+
+core.execute({
+  id: nanoid(),
+  type: "playback.seek",
+  payload: { time: 5000000 } // Seek to 5 seconds
+});
+```
+
+### batch()
+Executes multiple commands as a single atomic transaction. This ensures that:
+1. **History Consistency**: All commands in the batch are treated as a single entry in the undo/redo history.
+2. **Performance**: Observers are notified only once after all commands are applied, preventing UI jitter and redundant calculations.
+3. **Atomicity**: If one command fails (in a future transactional system), the state remains consistent.
+
+```ts
+import { core, nanoid } from "@openvideo/core";
+
+// Treat adding a clip and selecting it as a single user action
+core.batch([
+  {
+    id: nanoid(),
+    type: "clip.add",
+    payload: { clip: myClip }
+  },
+  {
+    id: nanoid(),
+    type: "project.select",
+    payload: { ids: [myClip.id] }
+  }
+]);
+```
+
+## Bulk Updates
+Many commands support operations on multiple entities simultaneously. This is the most efficient way to perform global changes (e.g., changing the background color of all text clips).
+
+### Example: Update Multiple Clips
+Instead of sending 10 `clip.update` commands, you can send one command with multiple IDs or a bulk payload.
+
+```ts
+core.execute({
+  id: nanoid(),
+  type: "clip.update",
+  payload: {
+    ids: ["clip-1", "clip-2", "clip-3"], // Target multiple clips
+    update: { opacity: 0.5 }           // Apply same change to all
+  }
+});
+```
+
+### Example: Bulk Caption Styling
+AI agents often need to re-style an entire video's captions in one go.
+
+```ts
+core.execute({
+  id: nanoid(),
+  type: "caption.setStyle",
+  payload: {
+    fontFamily: "Inter",
+    fontSize: 48,
+    fontWeight: "bold",
+    textAlign: "center"
+  }
+});
+```
+
+## History Control
+
+Since every command generates patches, you can easily navigate history:
+
+```ts
+core.undo();
+core.redo();
+```
+
+## Common Command Types
+
+### Clip Commands
+
+- `clip.add`: Add a new clip to the project.
+- `clip.update`: Update properties of one or more clips.
+- `clip.remove`: Remove clips by ID.
+- `clip.split`: Split a clip at a specific time.
+- `clip.duplicate`: Clone existing clips.
+
+### Track Commands
+
+- `track.add`: Add a new timeline track.
+- `track.remove`: Remove a track.
+- `track.move`: Reorder tracks.
+
+### Caption Commands
+
+Specially designed for AI-driven captioning:
+
+- `caption.setStyle`: Update typography and layout.
+- `caption.setColors`: Update text, background, and shadow colors.
+- `caption.setVerticalPosition`: Move captions to `top`, `center`, or `bottom` presets.
+
+## DX Layer (Convenience Methods)
+
+While you can always use `core.execute()`, the `Core` class provides a high-level DX layer that wraps common commands:
+
+```ts
+// These are equivalent:
+core.clip.add({ type: 'Video', src: '...' });
+
+// Manual equivalent:
+core.execute({
+  id: nanoid(),
+  type: 'clip.add',
+  payload: { clip: await core.clip.prepare({ type: 'Video', ... }) }
+});
+```
+
+---
+
+Next, learn how to work with [Clips](./clips) or listen to [Events](./events).

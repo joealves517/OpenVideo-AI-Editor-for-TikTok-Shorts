@@ -1,0 +1,85 @@
+import { ActiveSelection, FabricObject } from 'fabric';
+import Timeline from '../timeline';
+
+interface InternalObservable {
+  __eventListeners: Record<string, unknown>;
+}
+
+class CanvasMixin {
+  private ___eventListeners = {};
+  private ___pauseCount = 0;
+  public ___activeObjects: FabricObject[] = [];
+
+  resize(
+    this: Timeline,
+    payload: { width?: number; height?: number },
+    { force }: { force?: boolean } = { force: false }
+  ) {
+    if (!this.lowerCanvasEl) {
+      return;
+    }
+
+    this.setDimensions(payload);
+
+    if (force) {
+      this.tracksManager.renderTracks();
+    }
+    this.onResizeCanvas?.({
+      width: this.width,
+      height: this.height,
+    });
+  }
+
+  pauseEventListeners(this: Timeline) {
+    if (!this.___pauseCount) this.___pauseCount = 0;
+    if (this.___pauseCount === 0) {
+      this.___eventListeners = (
+        this as unknown as InternalObservable
+      ).__eventListeners;
+      (this as unknown as InternalObservable).__eventListeners = {};
+
+      const activeObjects = this.getActiveObjects();
+      this.discardActiveObject();
+      this.___activeObjects = activeObjects;
+    }
+    this.___pauseCount++;
+  }
+
+  resumeEventListeners(this: Timeline) {
+    if (!this.___pauseCount) this.___pauseCount = 0;
+    this.___pauseCount--;
+    if (this.___pauseCount > 0) return;
+    this.___pauseCount = 0;
+
+    (this as unknown as InternalObservable).__eventListeners =
+      this.___eventListeners || {};
+    this.___eventListeners = {};
+
+    const activeObjects = this.___activeObjects || [];
+    if (!activeObjects.length) {
+      this.requestRenderAll();
+      return false;
+    }
+
+    if (activeObjects.length === 1) {
+      this.setActiveObject(activeObjects[0]!);
+    } else {
+      const activeSelection = new ActiveSelection(activeObjects);
+      this.setActiveObject(activeSelection);
+    }
+    this.requestRenderAll();
+  }
+
+  updateCachingActiveObjects(this: Timeline, newObjects: FabricObject[]) {
+    const objectsInCaching = this.___activeObjects;
+    // replace the transitions in the cache with the new ones using the same ids
+    this.___activeObjects = objectsInCaching.map((t) => {
+      const newObject = newObjects.find((nt) => nt.id === t.id);
+      if (newObject) {
+        return newObject;
+      }
+      return t;
+    });
+  }
+}
+export default CanvasMixin;

@@ -1,0 +1,80 @@
+---
+title: Tracks
+description: Organize and layer clips in Core.
+---
+
+Tracks serve as an organizational layer in OpenVideo. They define the layering (z-index) of clips and help group related assets. In Core, tracks are managed via commands.
+
+## Understanding Tracks
+
+In OpenVideo, a **Track** is a logical container for clips.
+- **Layering**: Tracks determine render order. Tracks at the start of the `tracks` array are rendered **on top** (front-most).
+- **Organization**: Helps group clips (e.g., "Captions", "B-Roll", "Background Music").
+
+## Managing Tracks
+
+The `core.track` utility provides high-level methods to manage tracks.
+
+### Adding Tracks
+
+```ts
+import { core } from "@openvideo/core";
+
+// Add a new track
+core.track.add({ 
+  name: "Subtitles", 
+  type: "Caption" 
+});
+```
+
+### Moving Tracks
+
+Reorder tracks to change their visual layering.
+
+```ts
+// Move track to index 0 (front-most)
+core.track.move(trackId, 0);
+```
+
+### Removing Tracks
+
+Removes the track and all clips associated with it.
+
+```ts
+core.track.remove(trackId);
+```
+
+## The Command API
+
+You can also use `core.execute()` to manage tracks directly:
+
+```ts
+import { core, nanoid } from "@openvideo/core";
+
+// Add track command
+core.execute({
+  id: nanoid(),
+  type: "track.add",
+  payload: { name: "New Track" }
+});
+
+// Reorder all tracks at once
+core.execute({
+  id: nanoid(),
+  type: "track.set",
+  payload: [track1, track2, track3]
+});
+```
+
+## Track Persistence
+
+Since tracks are part of the core project state, they are automatically serialized when you export the project.
+
+```ts
+const project = core.project.export();
+console.log(project.tracks); // Array of ITrack objects
+```
+
+---
+
+Next, learn how to listen for [Events](./events) or handle [Serialization](./serialization).

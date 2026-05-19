@@ -1,0 +1,135 @@
+---
+title: Clips
+description: Building blocks of video compositions in Core.
+---
+
+Clips are the building blocks of your video composition. In OpenVideo Core, clips are data-driven entities. You don't interact with them by setting properties directly; instead, you dispatch **commands** to the engine.
+
+## Adding Clips
+
+The recommended way to add clips is using the `core.clip.add` helper, which handles asset preparation (loading metadata, calculating dimensions) and then dispatches a `clip.add` command.
+
+### Video Clips
+
+```ts
+import { core } from "@openvideo/core";
+
+// Add a video clip to the default track
+const clip = await core.clip.add({
+  type: "Video",
+  src: "video.mp4",
+  display: { from: 0, to: 5_000_000 }, // 5 seconds
+});
+```
+
+### Image Clips
+
+```ts
+const clip = await core.clip.add({
+  type: "Image",
+  src: "photo.jpg",
+  left: 100,
+  top: 100,
+});
+```
+
+### Text Clips
+
+```ts
+const clip = await core.clip.add({
+  type: "Text",
+  text: "Hello World",
+  style: {
+    fontSize: 72,
+    fill: "#ffffff",
+  },
+});
+```
+
+## Updating Clips
+
+To change properties (position, size, text, etc.), use the `core.clip.update` method. This creates an undoable command.
+
+```ts
+// Update a single property
+core.clip.update(clipId, { left: 500 });
+
+// Batch updates to multiple properties
+core.clip.update(clipId, {
+  top: 300,
+  opacity: 0.5,
+  scale: 1.2
+});
+
+// For Text clips, styles are nested
+core.clip.update(textClipId, {
+  text: "New Heading",
+  style: { fill: "#ff0000" }
+});
+```
+
+## Common Operations
+
+### Splitting Clips
+
+Split a clip into two at a specific time.
+
+```ts
+// Split at 2 seconds
+core.clip.split(2_000_000, clipId);
+
+// If clipId is omitted, it splits the currently selected clip at the current playhead
+core.clip.split();
+```
+
+### Duplicating Clips
+
+```ts
+core.clip.duplicate([clipId]);
+```
+
+### Removing Clips
+
+```ts
+core.clip.remove([clipId]);
+```
+
+## The Command API (Direct)
+
+Under the hood, all the helpers above use `core.execute()`. You can dispatch commands directly for more control:
+
+```ts
+import { core, nanoid } from "@openvideo/core";
+
+core.execute({
+  id: nanoid(),
+  type: "clip.update",
+  payload: {
+    id: "clip_123",
+    updates: { opacity: 0.8 }
+  }
+});
+```
+
+## Batching Commands
+
+You can group multiple operations into a single history entry:
+
+```ts
+core.batch([
+  {
+    id: nanoid(),
+    type: "clip.add",
+    payload: { clip: myNewClip }
+  },
+  {
+    id: nanoid(),
+    type: "project.select",
+    payload: { ids: [myNewClip.id] }
+  }
+]);
+```
+
+---
+
+Next, learn how to organize clips into [Tracks](./tracks) or manage playback with the [Command API](./commands).

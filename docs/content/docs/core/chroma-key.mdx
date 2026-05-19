@@ -1,0 +1,49 @@
+---
+title: Chroma Key
+description: Remove backgrounds from clips in Core using the Command API.
+---
+
+Chroma Key (green screening) allows you to remove a specific background color from video or image clips. In OpenVideo Core, this is managed as part of the clip's data.
+
+## Enabling Chroma Key
+
+To enable Chroma Key, use `core.clip.update` to set the `chromaKey` property of a clip.
+
+```ts
+import { core } from "@openvideo/core";
+
+// Enable Chroma Key on a clip
+core.clip.update(clipId, {
+  chromaKey: {
+    enabled: true,
+    color: "#00FF00", // The color to remove (Green)
+    similarity: 0.15, // Tolerance (0.0 to 1.0)
+    spill: 0.05,       // Spill suppression (0.0 to 1.0)
+  }
+});
+```
+
+## Configuration Parameters
+
+| Parameter      | Type      | Default     | Description                                                              |
+| :------------- | :-------- | :---------- | :----------------------------------------------------------------------- |
+| **enabled**    | `boolean` | `false`     | Whether the chroma key filter is active.                                 |
+| **color**      | `string`  | `"#00FF00"` | The background color to remove in hex format.                            |
+| **similarity** | `number`  | `0.1`       | Tolerance for color matching. Higher values remove more similar colors.  |
+| **spill**      | `number`  | `0.0`       | Removes the color "halo" reflected onto the subject from the background. |
+
+## Disabling Chroma Key
+
+```ts
+core.clip.update(clipId, {
+  chromaKey: { enabled: false }
+});
+```
+
+## Real-time Updates
+
+Since the Core engine is deterministic and reactive, any update to the `chromaKey` property via `core.execute()` or `core.clip.update()` will be immediately reflected in the state and propagated to listeners (like the Renderer).
+
+---
+
+Next, learn how to apply [Effects](./effects) or listen for [Events](./events).

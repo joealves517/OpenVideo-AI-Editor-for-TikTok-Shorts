@@ -1,0 +1,24 @@
+{
+  "root": true,
+  "title": "Pixi Renderer (Studio)",
+  "pages": [
+    "index",
+    "---Getting Started---",
+    "installation",
+    "basic-usage",
+    "---Visual Studio---",
+    "clips",
+    "tracks",
+    "events",
+    "---Creative---",
+    "animations",
+    "transitions",
+    "effects",
+    "chroma-key",
+    "---Export & Serialization---",
+    "serialization",
+    "rendering",
+    "---Reference---",
+    "api-reference"
+  ]
+}

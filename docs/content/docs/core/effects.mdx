@@ -1,0 +1,104 @@
+---
+title: Effects
+description: Apply visual filters in Core using the Command API.
+---
+
+In OpenVideo Core, effects are part of the clip's state. To apply an effect, you update the `effects` array of a clip via commands.
+
+## Applying Effects
+
+Use `core.clip.update` to add effects to a clip's `effects` property.
+
+```ts
+import { core } from "@openvideo/core";
+
+// Apply a sepia filter to a clip
+core.clip.update(clipId, {
+  effects: [
+    {
+      id: "effect_1",
+      key: "sepia",
+      startTime: 0,
+      duration: 5_000_000, // 5 seconds
+    }
+  ]
+});
+```
+
+## Using Effect Values
+
+Many effects accept custom values to tune their appearance.
+
+```ts
+core.clip.update(clipId, {
+  effects: [
+    {
+      id: "glow_1",
+      key: "glowFilter",
+      startTime: 0,
+      duration: 5_000_000,
+      values: {
+        distance: 20,
+        outerStrength: 3,
+        color: "#ff0000"
+      }
+    }
+  ]
+});
+```
+
+## Managing Effects
+
+Since `effects` is an array, you can add, remove, or replace effects by updating the entire array.
+
+### Replacing Effects
+
+```ts
+// Replace all effects with a new grayscale filter
+core.clip.update(clipId, {
+  effects: [
+    { id: "bw_1", key: "grayscale", startTime: 0, duration: 10e6 }
+  ]
+});
+```
+
+### Removing Effects
+
+```ts
+core.clip.update(clipId, {
+  effects: []
+});
+```
+
+## Supported Effect Keys
+
+OpenVideo Core supports a wide range of shaders. Some popular ones include:
+
+- `grayscale`: Classic black and white.
+- `sepia`: Warm vintage brown tint.
+- `invert`: Inverts image colors.
+- `pixelate`: Customizable blocky pixelation.
+- `vignette`: Darkens the edges of the clip.
+- `glitch`: Standard digital glitch effect.
+
+## Custom Effects
+
+You can register custom GLSL shaders with the engine and then use their keys in the `effects` array.
+
+```ts
+import { registerCustomEffect } from "@openvideo/core";
+
+registerCustomEffect("myCustomEffect", {
+  label: "Channel Swap",
+  fragment: `
+    vec4 mainImage(vec2 p) {
+      vec4 color = getTextureColor(p);
+      return vec4(color.g, color.r, color.b, color.a);
+    }
+  `,
+});
+```
+
+---
+
+Next, learn how to create [Animations](./animations) or manage [Transitions](./transitions).

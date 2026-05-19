@@ -1,0 +1,107 @@
+---
+title: Basic Usage
+description: Fundamentals of using OpenVideo Core.
+---
+
+OpenVideo Core is the headless engine that powers your video composition. It is designed to be used in environments where a visual canvas might not be required (e.g., server-side rendering, AI agents, or background processing).
+
+## Initializing the Engine
+
+```ts
+import { Core } from "@openvideo/core";
+
+const core = new Core({
+  settings: {
+    width: 1920,
+    height: 1080,
+    fps: 30,
+    duration: 30_000_000,
+  },
+});
+```
+
+## Adding Clips
+
+In Core, the recommended way to add media is using the `core.clip` utility, which handles asset preparation automatically.
+
+### Adding Image Clips
+
+```ts
+// Add an image to the timeline
+const image = await core.clip.add({
+  type: "Image",
+  src: "photo.jpg",
+  left: 100,
+  top: 100,
+  width: 800,
+  height: 600,
+  display: { from: 0, to: 5_000_000 }, // 5 seconds
+});
+```
+
+### Adding Video Clips
+
+```ts
+// Add a video clip
+const video = await core.clip.add({
+  type: "Video",
+  src: "clip.mp4",
+  left: 0,
+  top: 0,
+  width: 1920,
+  height: 1080,
+  display: { from: 5_000_000, to: 15_000_000 }, // 5 to 15 seconds
+});
+```
+
+### Adding Text Clips
+
+```ts
+const text = await core.clip.add({
+  type: "Text",
+  text: "Hello OpenVideo",
+  left: 960,
+  top: 540,
+  style: {
+    fontSize: 48,
+    fill: "#ffffff",
+  },
+  display: { from: 0, to: 10_000_000 },
+});
+```
+
+## Loading Multiple Clips in Parallel
+
+For better performance, you can prepare multiple clips in parallel before adding them to the engine.
+
+```ts
+// Prepare assets in parallel
+const [img1, img2, vid1] = await Promise.all([
+  core.clip.prepare({ type: "Image", src: "photo1.jpg" }),
+  core.clip.prepare({ type: "Image", src: "photo2.jpg" }),
+  core.clip.prepare({ type: "Video", src: "clip1.mp4" }),
+]);
+
+// Execute commands to add them
+core.batch([
+  { id: "cmd1", type: "clip.add", payload: { clip: img1 } },
+  { id: "cmd2", type: "clip.add", payload: { clip: img2 } },
+  { id: "cmd3", type: "clip.add", payload: { clip: vid1 } },
+]);
+```
+
+## Error Handling
+
+Always wrap your asset loading in a try-catch block to handle network or decoding errors.
+
+```ts
+try {
+  const clip = await core.clip.add({ type: "Video", src: "invalid.mp4" });
+} catch (error) {
+  console.error("Failed to load clip:", error);
+}
+```
+
+---
+
+Next, learn how to organize clips with [Tracks](./tracks) or explore the [Command API](./commands) for advanced control.
