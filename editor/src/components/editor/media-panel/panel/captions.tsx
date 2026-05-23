@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { nanoid } from "nanoid";
 import { toast } from "sonner";
+import { uploadFile } from "@/lib/upload-utils";
 
 export default function PanelCaptions() {
   const clips = useStore(projectStore, (s) => s.clips);
@@ -105,10 +106,25 @@ export default function PanelCaptions() {
 
       for (const src of uniqueMediaSrcs) {
         try {
+          let processUrl = src;
+
+          // If the src is a local blob URL, we MUST upload it to GCS temporarily so the backend AI can access it.
+          // This perfectly satisfies the "only upload when AI needs it" requirement.
+          if (src.startsWith("blob:")) {
+            toast.info("Uploading media for AI processing...", { id: toastId });
+            const response = await fetch(src);
+            const blob = await response.blob();
+            const file = new File([blob], `ai_temp_${nanoid(6)}.mp4`, {
+              type: blob.type || "video/mp4",
+            });
+            const uploadResult = await uploadFile(file);
+            processUrl = uploadResult.url;
+          }
+
           const transcribeResponse = await fetch("/api/transcribe", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: src, model: "nova-3" }),
+            body: JSON.stringify({ url: processUrl, model: "nova-3" }),
           });
 
           if (!transcribeResponse.ok) {
