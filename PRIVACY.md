@@ -6,11 +6,11 @@ This Privacy Policy explains how **OpenVideo - AI Editor for TikTok & Shorts** (
 
 ---
 
-## 1. Core Privacy Architecture & Cloud Sync
+## 1. Core Privacy Architecture: Client-Side First
 
-OpenVideo leverages a hybrid architecture. While core video editing, rendering, and composition tasks utilizing WebCodecs and the PixiJS engine are executed **locally within your browser** for optimal performance, **your media assets and project data are synchronized with our cloud servers**. 
+OpenVideo is designed with a "client-side first" philosophy. The core video editing, rendering, and composition tasks utilizing WebCodecs and the PixiJS engine are executed **locally within your browser**. 
 
-When you import media files (videos, high-resolution images, and audio) into the editor, they are securely uploaded to our Google Cloud Storage infrastructure. This ensures your assets are safely backed up, available across all your devices, and readily accessible for advanced backend AI processing.
+Your heavy media files (videos, high-resolution images, and local audio) are cached locally on your device using IndexedDB and the Origin Private File System (OPFS). **They are NOT automatically uploaded to our servers** unless you explicitly initiate an AI processing feature or cloud synchronization.
 
 ---
 
@@ -25,11 +25,9 @@ When you sign in using Google OAuth2, we collect your:
 *   **Purpose:** To authenticate your identity securely, create your personal workspace, manage your AI generation credits, and allow you to sync your projects across devices.
 
 ### B. User-Generated Content & Project Data
-*   **User-Uploaded Media:** Videos, images, and audio files you upload into the editor's Media Panel are transmitted to and securely stored in our Google Cloud Storage.
 *   **Project Metadata:** Timeline structures, layer configurations, and text elements (JSON format).
-*   **Exported Videos:** Final rendered video files or batch exports may be stored on our servers when using cloud export features.
-*   **Media for AI Processing:** The text, audio segments, or visual prompts necessary to fulfill specific AI actions (e.g., Speech-to-Text transcription, AI Copilot chat) are processed by our backend APIs.
-*   **Purpose:** To seamlessly synchronize your assets across your devices, provide persistent cloud backups, and facilitate advanced AI computations that cannot run locally.
+*   **Media for AI Processing:** If you use AI features (e.g., Speech-to-Text transcription, AI Voiceover generation, or AI Copilot chat), the specific text, audio segment, or prompt necessary to fulfill that action is securely transmitted to our backend.
+*   **Purpose:** To save your project state for cross-device synchronization and to process advanced AI computations that cannot run locally.
 
 ### C. Technical Permissions
 Our extension requests specific Chrome permissions strictly for functionality:

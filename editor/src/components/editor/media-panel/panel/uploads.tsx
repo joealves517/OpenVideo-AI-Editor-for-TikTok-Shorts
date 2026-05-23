@@ -257,15 +257,8 @@ export default function PanelUploads() {
         const id = crypto.randomUUID();
         const type = detectFileType(file);
 
-        // 1. Upload to R2
-        let uploadResult;
-        try {
-          uploadResult = await uploadFile(file);
-        } catch (error) {
-          console.error("R2 upload failed, falling back to local only:", error);
-        }
-
-        const src = uploadResult?.url || URL.createObjectURL(file);
+        // Removed R2/GCS cloud upload to save costs. Files stay strictly local.
+        const src = URL.createObjectURL(file);
 
         // 2. Save to OPFS if supported (for local caching/backup)
         if (storageService.isOPFSSupported()) {
