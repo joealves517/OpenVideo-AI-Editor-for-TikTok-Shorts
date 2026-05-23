@@ -12,6 +12,7 @@ import {
   type IconProps,
   IconPhoto,
   IconVideo,
+  IconSchool,
 } from "@tabler/icons-react";
 import { create } from "zustand";
 
@@ -23,10 +24,10 @@ export type Tab =
   | "text"
   | "captions"
   | "effects"
-  | "elements"
   | "voiceovers"
   | "sfx"
-  | "transitions";
+  | "transitions"
+  | "academy";
 
 export const tabs: {
   [key in Tab]: { icon: React.FC<IconProps> | React.FC<any>; label: string };
@@ -47,10 +48,7 @@ export const tabs: {
     icon: IconLetterT,
     label: "Text",
   },
-  elements: {
-    icon: IconCircleSquare,
-    label: "Elements",
-  },
+
   captions: {
     icon: IconSubtitles,
     label: "Captions",
@@ -74,6 +72,10 @@ export const tabs: {
   effects: {
     icon: IconSparkles,
     label: "Effects",
+  },
+  academy: {
+    icon: IconSchool,
+    label: "Academy",
   },
 };
 

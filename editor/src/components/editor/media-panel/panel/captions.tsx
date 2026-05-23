@@ -11,6 +11,7 @@ import { projectStore, core } from "@/lib/project";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { nanoid } from "nanoid";
+import { toast } from "sonner";
 
 export default function PanelCaptions() {
   const clips = useStore(projectStore, (s) => s.clips);
@@ -81,6 +82,7 @@ export default function PanelCaptions() {
   const handleGenerateCaptions = async () => {
     if (mediaItems.length === 0) return;
 
+    const toastId = toast.loading("Generating captions...");
     setIsGenerating(true);
     try {
       const fontName = "Bangers-Regular";
@@ -92,37 +94,82 @@ export default function PanelCaptions() {
       });
 
       const clipsToAdd: any[] = [];
+      let hasError = false;
+      let errorMsg = "";
 
-      for (const mediaClip of mediaItems) {
+      // 1. Group clips by unique src to avoid transcribing the same file multiple times
+      const uniqueMediaSrcs = Array.from(
+        new Set(mediaItems.map((clip: any) => clip.src).filter(Boolean)),
+      );
+      const transcriptionMap: Record<string, any[]> = {};
+
+      for (const src of uniqueMediaSrcs) {
         try {
-          // 1. Get transcription
-          const audioUrl = (mediaClip as any).src;
-          if (!audioUrl) continue;
-
           const transcribeResponse = await fetch("/api/transcribe", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: audioUrl, model: "nova-3" }),
+            body: JSON.stringify({ url: src, model: "nova-3" }),
           });
 
           if (!transcribeResponse.ok) {
-            Log.error(`Transcription failed for media ${mediaClip.id}`);
+            const errData = await transcribeResponse.json().catch(() => ({}));
+            const errMsg = errData.message || `HTTP ${transcribeResponse.status}`;
+            Log.error(`Transcription failed for source: ${errMsg}`);
+
+            // If the video has no audio stream (silent video), we just skip it silently instead of treating it as a blocking error
+            if (
+              errMsg.includes("no audio stream") ||
+              errMsg.includes("does not contain any stream")
+            ) {
+              continue;
+            }
+
+            hasError = true;
+            errorMsg = errMsg;
             continue;
           }
 
           const transcriptionData = await transcribeResponse.json();
-          if (!transcriptionData) continue;
+          if (transcriptionData) {
+            transcriptionMap[src] =
+              transcriptionData.results?.main?.words || transcriptionData.words || [];
+          }
+        } catch (error: any) {
+          Log.error(`Failed to process source ${src}:`, error);
+          hasError = true;
+          errorMsg = error.message || error;
+        }
+      }
 
-          const words = transcriptionData.results?.main?.words || transcriptionData.words || [];
+      // 2. Map generated words back to all timeline clips, matching trim boundaries
+      for (const mediaClip of mediaItems) {
+        const words = transcriptionMap[mediaClip.src];
+        if (!words || words.length === 0) continue;
+
+        try {
+          // Filter words to only include those in the visible (trimmed) portion of the clip,
+          // and offset them so their timestamps are relative to the start of the visible clip.
+          const trimFrom = (mediaClip.trim?.from || 0) / 1_000_000;
+          const trimTo = (mediaClip.trim?.to || mediaClip.duration || 0) / 1_000_000;
+
+          const filteredWords = words
+            .filter((w: any) => w.start >= trimFrom && w.end <= trimTo)
+            .map((w: any) => ({
+              ...w,
+              start: w.start - trimFrom,
+              end: w.end - trimFrom,
+            }));
+
+          if (filteredWords.length === 0) continue;
 
           const settings = core.store.getState().settings;
           const captionClipsJSON = await generateCaptionClips({
             videoWidth: settings.width,
             videoHeight: settings.height,
-            words,
+            words: filteredWords,
           });
 
-          // 3. Prepare clips
+          // Prepare captions and shift by mediaClip display starting point on the timeline
           for (const json of captionClipsJSON) {
             const enrichedJson = {
               ...json,
@@ -138,9 +185,13 @@ export default function PanelCaptions() {
             };
             clipsToAdd.push(enrichedJson);
           }
-        } catch (error) {
-          Log.error(`Failed to process media ${mediaClip.id}:`, error);
+        } catch (error: any) {
+          Log.error(`Failed to map captions for media ${mediaClip.id}:`, error);
         }
+      }
+
+      if (hasError && clipsToAdd.length === 0) {
+        throw new Error(errorMsg || "Failed to transcribe audio.");
       }
 
       const trackId = "track_" + nanoid(10);
@@ -160,11 +211,14 @@ export default function PanelCaptions() {
         }));
 
         core.batch([trackCommand, ...addCommands] as any[]);
+        toast.success("Captions generated successfully!", { id: toastId });
       } else {
         core.execute(trackCommand as any);
+        toast.success("Captions generated (no speech clips added).", { id: toastId });
       }
-    } catch (error) {
+    } catch (error: any) {
       Log.error("Failed to generate captions:", error);
+      toast.error(`Failed to generate captions: ${error.message || error}`, { id: toastId });
     } finally {
       setIsGenerating(false);
     }

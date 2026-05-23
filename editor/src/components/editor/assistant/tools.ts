@@ -5,12 +5,18 @@ import { generateCaptionClips } from "@/lib/caption-generator";
 import { nanoid } from "@openvideo/core";
 
 export const handleAddClip = async (input: any) => {
-  const { text, prompt, assetType, targetId, duration, width, height, left, top, action } = input;
+  const { text, prompt, targetId, duration, width, height, left, top, action } = input;
   const from = input.from ?? 0;
   const to = input.to ? (input.to - from < 1 ? 1 : input.to) : from + 5;
 
+  // Resolve raw type from assetType, type, or action
+  let rawType = input.assetType || input.type || "";
+  if (rawType) {
+    rawType = rawType.charAt(0).toUpperCase() + rawType.slice(1).toLowerCase();
+  }
+
   const type =
-    assetType ||
+    rawType ||
     (action === "add_text"
       ? "Text"
       : action === "add_image"
@@ -38,24 +44,33 @@ export const handleAddClip = async (input: any) => {
   if (left !== undefined) clip.left = left;
   if (top !== undefined) clip.top = top;
 
-  if (type === "Video" && prompt) {
+  // Configure specific type properties with fallback assets to prevent timeline engine crashes
+  if (type === "Video") {
     clip.src =
+      input.url ||
+      input.src ||
       "https://cdn.scenify.io/AUTOCROP/VIDEO/e4545b0a-56e8-4982-80af-9b51094909f7/ec042fbe-01d8-4ef2-8389-c166eae76a77.mp4";
-  } else if (type === "Image" && prompt) {
-    clip.src = "https://picsum.photos/800/600";
-  } else if (type === "Text" && (text || input.text)) {
-    clip.text = text || input.text;
+    clip.metadata = { previewUrl: clip.src };
+    clip.trim = { from: 0, to: (to - from) * 1_000_000 };
+  } else if (type === "Image") {
+    clip.src = input.url || input.src || "https://picsum.photos/800/600";
+    clip.metadata = { previewUrl: clip.src };
+  } else if (type === "Text") {
+    clip.text = text || input.text || "Hello Text";
     clip.style = {
       fontSize: 100,
       fill: "#ffffff",
       fontFamily: "Inter",
     };
-  } else if (type === "Audio" && prompt) {
+  } else if (type === "Audio") {
     clip.src =
+      input.url ||
+      input.src ||
       "https://cdn.scenify.io/AUTOCROP/VIDEO/e4545b0a-56e8-4982-80af-9b51094909f7/ec042fbe-01d8-4ef2-8389-c166eae76a77.mp4";
   }
 
-  await core.clip.add(clip);
+  const addOptions = type === "Video" ? { objectFit: "contain" as const } : undefined;
+  await core.clip.add(clip, addOptions);
 };
 
 export const handleUpdateClip = async (input: any) => {
@@ -170,23 +185,55 @@ export const handleSearchAndAddMedia = async (input: any) => {
     );
     const data = await response.json();
 
-    let src = "";
     if (type === "image") {
-      src = data.photos?.[0]?.src?.large;
-    } else {
-      src = data.videos?.[0]?.video_files?.[0]?.link;
-    }
+      const photo = data.photos?.[0];
+      if (!photo) return;
 
-    if (src) {
       await core.clip.add({
-        type: type || "video",
-        src,
+        id: targetId || `clip_${Date.now()}`,
+        type: "Image",
+        name: query ? `${query} (Image)` : "Image clip",
+        src: photo.src?.large || photo.src?.original,
+        width: photo.width,
+        height: photo.height,
         display: {
-          from: from * 1000000,
-          to: (from + 5) * 1000000,
+          from: from * 1_000_000,
+          to: (from + 5) * 1_000_000,
         },
-        duration: 5000000,
+        duration: 5_000_000,
+        metadata: {
+          previewUrl: photo.src?.medium || photo.src?.small,
+        },
       });
+    } else {
+      const video = data.videos?.[0];
+      if (!video) return;
+
+      const videoFile =
+        video.video_files.find((f: any) => f.quality === "hd") || video.video_files[0];
+      if (!videoFile) return;
+
+      const durationUs = (video.duration || 5) * 1_000_000;
+
+      await core.clip.add(
+        {
+          id: targetId || `clip_${Date.now()}`,
+          type: "Video",
+          name: query ? `${query} (Video)` : "Video clip",
+          src: videoFile.link,
+          width: video.width,
+          height: video.height,
+          display: {
+            from: from * 1_000_000,
+            to: from * 1_000_000 + durationUs,
+          },
+          trim: { from: 0, to: durationUs },
+          metadata: {
+            previewUrl: video.image,
+          },
+        },
+        { objectFit: "contain" },
+      );
     }
   } catch (error) {
     console.error("Failed to search and add media:", error);
@@ -197,28 +244,34 @@ export const handleGenerateVoiceover = async (input: any) => {
   const { text, voiceId, targetId, from: fromTime } = input;
   const from = fromTime ?? projectStore.getState().currentTime / 1_000_000;
 
-  try {
-    const response = await fetch("/api/elevenlabs/voiceover", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, voiceId }),
-    });
-    const data = await response.json();
+  const response = await fetch("/api/elevenlabs/voiceover", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, voiceId }),
+  });
 
-    if (data.url) {
-      await core.clip.add({
-        type: "Audio",
-        src: data.url,
-        display: {
-          from: from * 1000000,
-          to: (from + 5) * 1000000, // Default 5s if unknown
-        },
-        duration: 5000000,
-      });
-    }
-  } catch (error) {
-    console.error("Failed to generate voiceover:", error);
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || `Voiceover API failed with status ${response.status}`);
   }
+
+  const data = await response.json();
+
+  if (!data.url) {
+    throw new Error("Voiceover generated but no audio URL returned");
+  }
+
+  await core.clip.add({
+    id: targetId || `clip_${Date.now()}`,
+    type: "Audio",
+    name: text ? `Voiceover: "${text}"` : "Audio clip",
+    src: data.url,
+    display: {
+      from: from * 1_000_000,
+      to: (from + 5) * 1_000_000,
+    },
+    duration: 5_000_000,
+  });
 };
 
 export const handleSeekToTime = async (input: any) => {

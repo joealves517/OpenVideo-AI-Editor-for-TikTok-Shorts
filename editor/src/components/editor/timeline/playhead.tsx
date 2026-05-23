@@ -1,5 +1,5 @@
 import { useStore } from "zustand";
-import { projectStore } from "@/lib/project";
+import { projectStore, core } from "@/lib/project";
 import { MouseEvent, TouchEvent, useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { timeUsToUnits, unitsToTimeUs, ITimelineScaleState } from "@openvideo/timeline";
 import { useTimelineOffsetX } from "../hooks/use-timeline-offset";
@@ -66,6 +66,12 @@ const Playhead = ({ scrollLeft, scale }: { scrollLeft: number; scale: ITimelineS
 
   const handleMouseDown = (e: MouseEvent<HTMLDivElement> | TouchEvent<HTMLDivElement>) => {
     e.preventDefault();
+
+    // Pause playback if currently playing to allow smooth scrubbing
+    if (projectStore.getState().isPlaying) {
+      core.pause();
+    }
+
     const clientX = (e as any).touches ? (e as any).touches[0].clientX : (e as any).clientX;
 
     // Capture current state at the moment of interaction
@@ -102,13 +108,14 @@ const Playhead = ({ scrollLeft, scale }: { scrollLeft: number; scale: ITimelineS
       id="playhead"
       style={{
         position: "absolute",
-        left: timelineOffsetX + 16 + position,
+        left: timelineOffsetX + position,
         top: 50,
         width: 1,
-        height: "calc(100% - 50px)",
-        zIndex: 100,
+        height: "calc(100% - 68px)",
+        zIndex: 30, // Reduced from 100 so it sits nicely behind modal dialogs and overlays
         cursor: "ew-resize",
         touchAction: "none",
+        display: position < -6 ? "none" : "block", // Hide if scrolled off-screen to the left
       }}
     >
       {/* Handle */}

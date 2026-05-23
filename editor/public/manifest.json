@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "OpenVideo - AI Editor for TikTok & Shorts",
+  "version": "1.0.1",
+  "description": "Create viral TikToks, Shorts & Reels instantly. Features AI voiceovers, stock media, and a powerful timeline editor in your browser.",
+  "permissions": [
+    "identity",
+    "storage",
+    "unlimitedStorage"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    },
+    "default_title": "Open OpenVideo Copilot"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt88w0VeSGsMH6eI8jMtonotOfemI1zqJFguWsE45rKqQffpxrj6Qsh2KoDOTWWl5yAeO9t2wZ/uUEBWts5p/KqqOO7Ao8EEumPEGU/GPGWe0XLLf5pYyYPfPMfjEfqZJeUTnt/ye8kEAzRCD26w/jk1nb1ZtIBh5a3+nWr0wEO5Uc7mis4RBQtPPqHSpmWxdoRmUB2UK8WEIOpUcVs7QJq1Git1T72+8043i+PdTV+b8a86KemI6D5OWX6heoGQnNCNu1nqxqnqfAZliyfZ8OzYeqwaNoey+ewWDzlpBs3jrRnN/KIghAsvnwM8pjJk35LK1TTjxZhDp+Ygd5enz3QIDAQAB",
+  "oauth2": {
+    "client_id": "676582412453-75u6fhol5r48edp5a33j588esphgu594.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/userinfo.profile"
+    ]
+  },
+  "host_permissions": [
+    "https://openvideo-copilot-backend-676582412453.us-central1.run.app/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self';"
+  }
+}

@@ -1,0 +1,94 @@
+# Lesson 2: Niche Expansion Strategies
+
+**Duration**: 25 minutes  
+**Goal**: Expand into new niches while maintaining focus
+
+---
+
+## When to Expand
+
+**Signs You're Ready**:
+- Established in current niche
+- Consistent revenue
+- Systems in place
+- Ready for growth
+
+**Benefits**:
+- New revenue streams
+- Diversified income
+- Reduced risk
+- Faster scaling
+
+---
+
+## Expansion Strategies
+
+### Strategy 1: Related Niches
+
+**How**: Expand to related niches
+
+**Example**: Finance → Business → Real Estate
+
+**Benefits**: Leverage existing expertise
+
+---
+
+### Strategy 2: New Channels
+
+**How**: Create new channel in new niche
+
+**Benefits**: Test without risk to main channel
+
+---
+
+### Strategy 3: Sub-Niches
+
+**How**: Break niche into sub-niches
+
+**Example**: Health → Fitness → Nutrition → Mental Health
+
+**Benefits**: Deep expertise, multiple segments
+
+---
+
+## Pro Tips
+
+1. **Start with one new niche** = test first
+2. **Use existing systems** = efficient expansion
+3. **Track performance** = optimize strategy
+
+---
+
+## Action Items
+
+- [ ] Identify expansion opportunity
+- [ ] Create new channel
+- [ ] Plan content strategy
+- [ ] Use [OpenVideo Editor](/) for content
+- [ ] Track performance
+- [ ] Adjust strategy
+
+---
+
+## Key Takeaways
+
+1. **Expand strategically** = new revenue
+2. **Related niches** = leverage expertise
+3. **New channels** = test safely
+4. **Track performance** = optimize
+
+---
+
+## Next Lesson
+
+**[Lesson 3: Team Building & Outsourcing →](./lesson-3-team-building.md)**
+
+---
+
+*Remember: Start using the OpenVideo Editor App today to expand into new niches!*
+
+---
+
+## 📄 License & Credits
+
+This learning resource is localized, customized, and compiled by the **OpenVideo Team**, inspired by the incredible open-source community course created by **Chris Porter**. We highly appreciate the contributions of open-source creators to community education.

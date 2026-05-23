@@ -207,6 +207,7 @@ export class StudioBridge {
         ) {
           console.log('handleUpdateClip [DISPLAY UPDATED]', clipId, value);
           clip.display = { ...value };
+          clip.duration = value.to - value.from;
           this.studio.updateFrame(this.studio.currentTime);
         }
       } else {
@@ -216,6 +217,15 @@ export class StudioBridge {
         if (currentValue !== value) {
           console.log('handleUpdateClip [PROP UPDATED]', clipId, prop, value);
           Object.assign(clip, { [prop]: value });
+
+          if (prop === 'duration') {
+            if (clip.display) {
+              clip.display.to = clip.display.from + value;
+            }
+          }
+          if (prop === 'display' && value) {
+            clip.duration = value.to - value.from;
+          }
 
           if (
             prop === 'locked' &&
@@ -272,14 +282,29 @@ export class StudioBridge {
     try {
       await fontManager.addFont({ name: fontFamily, url: fontUrl });
     } catch (err) {
-      console.warn(`[StudioBridge] Failed to pre-load font "${fontFamily}":`, err);
+      console.warn(
+        `[StudioBridge] Failed to pre-load font "${fontFamily}":`,
+        err
+      );
     }
   }
 
   private syncClipProperties(clip: IClip, coreClip: AnyClip): boolean {
     let changed = false;
     // Legacy sync logic for full updates
-    const props: (keyof AnyClip | 'text' | 'words' | 'caption' | 'textBoxStyle' | 'wordsPerLine' | 'videoWidth' | 'videoHeight' | 'fontUrl' | 'mediaId' | 'bottomOffset')[] = [
+    const props: (
+      | keyof AnyClip
+      | 'text'
+      | 'words'
+      | 'caption'
+      | 'textBoxStyle'
+      | 'wordsPerLine'
+      | 'videoWidth'
+      | 'videoHeight'
+      | 'fontUrl'
+      | 'mediaId'
+      | 'bottomOffset'
+    )[] = [
       'left',
       'top',
       'width',
@@ -305,7 +330,8 @@ export class StudioBridge {
       'videoHeight',
       'fontUrl',
       'mediaId',
-      'bottomOffset'
+      'bottomOffset',
+      'duration',
     ];
     props.forEach((prop) => {
       const newValue = (coreClip as any)[prop];
@@ -351,6 +377,7 @@ export class StudioBridge {
         clip.display.to !== d.to)
     ) {
       clip.display = { ...d };
+      clip.duration = d.to - d.from;
       changed = true;
     }
 

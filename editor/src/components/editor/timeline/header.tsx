@@ -94,6 +94,7 @@ const Header = ({
         position: "relative",
         height: "50px",
         flex: "none",
+        zIndex: 30,
       }}
     >
       <div
@@ -114,15 +115,18 @@ const Header = ({
             alignItems: "center",
           }}
         >
-          <div className="flex px-2">
+          <div className="flex px-2 items-center gap-1">
             <Button
               disabled={!selectedClip || isLocked}
               onClick={handleDelete}
               variant={"ghost"}
               size={"sm"}
-              className="flex items-center gap-1 px-2"
+              className="flex items-center gap-1 px-2 relative group/tooltip"
             >
               <Trash2 size={14} />
+              <div className="absolute bottom-[130%] left-1/2 -translate-x-1/2 px-2.5 py-1 bg-neutral-900 border border-border/40 text-white text-[10px] font-medium rounded-md whitespace-nowrap shadow-xl opacity-0 scale-95 pointer-events-none group-hover/tooltip:opacity-100 group-hover/tooltip:scale-100 transition-all duration-150 ease-out z-50">
+                Delete
+              </div>
             </Button>
 
             <Button
@@ -130,30 +134,41 @@ const Header = ({
               onClick={handleSplit}
               variant={"ghost"}
               size={"sm"}
-              className="flex items-center gap-1 px-2"
+              className="flex items-center gap-1 px-2 relative group/tooltip"
             >
               <Scissors size={15} />
+              <div className="absolute bottom-[130%] left-1/2 -translate-x-1/2 px-2.5 py-1 bg-neutral-900 border border-border/40 text-white text-[10px] font-medium rounded-md whitespace-nowrap shadow-xl opacity-0 scale-95 pointer-events-none group-hover/tooltip:opacity-100 group-hover/tooltip:scale-100 transition-all duration-150 ease-out z-50">
+                Split
+              </div>
             </Button>
+
             <Button
               disabled={!selectedClip || isLocked}
               onClick={handleDuplicate}
               variant={"ghost"}
               size={"sm"}
-              className="flex items-center gap-1 px-2"
+              className="flex items-center gap-1 px-2 relative group/tooltip"
             >
               <Copy size={15} />
+              <div className="absolute bottom-[130%] left-1/2 -translate-x-1/2 px-2.5 py-1 bg-neutral-900 border border-border/40 text-white text-[10px] font-medium rounded-md whitespace-nowrap shadow-xl opacity-0 scale-95 pointer-events-none group-hover/tooltip:opacity-100 group-hover/tooltip:scale-100 transition-all duration-150 ease-out z-50">
+                Duplicate
+              </div>
             </Button>
           </div>
           <div className="flex items-center justify-center">
-            <div>
+            <div className="flex items-center gap-1">
               <Button
-                className="hidden lg:inline-flex"
+                className="hidden lg:inline-flex relative group/tooltip"
                 onClick={() => handleSeek(0)}
                 variant={"ghost"}
                 size={"icon"}
               >
                 <IconPlayerSkipBack size={14} />
+                <div className="absolute bottom-[130%] left-1/2 -translate-x-1/2 px-2.5 py-1 bg-neutral-900 border border-border/40 text-white text-[10px] font-medium rounded-md whitespace-nowrap shadow-xl opacity-0 scale-95 pointer-events-none group-hover/tooltip:opacity-100 group-hover/tooltip:scale-100 transition-all duration-150 ease-out z-50">
+                  Go to Start
+                </div>
               </Button>
+
               <Button
                 onClick={() => {
                   if (isPlaying) {
@@ -170,13 +185,17 @@ const Header = ({
                   <IconPlayerPlayFilled size={14} />
                 )}
               </Button>
+
               <Button
-                className="hidden lg:inline-flex"
+                className="hidden lg:inline-flex relative group/tooltip"
                 onClick={() => handleSeek(duration)}
                 variant={"ghost"}
                 size={"icon"}
               >
                 <IconPlayerSkipForward size={14} />
+                <div className="absolute bottom-[130%] left-1/2 -translate-x-1/2 px-2.5 py-1 bg-neutral-900 border border-border/40 text-white text-[10px] font-medium rounded-md whitespace-nowrap shadow-xl opacity-0 scale-95 pointer-events-none group-hover/tooltip:opacity-100 group-hover/tooltip:scale-100 transition-all duration-150 ease-out z-50">
+                  Go to End
+                </div>
               </Button>
             </div>
             <div
@@ -212,7 +231,7 @@ const Header = ({
             </div>
           </div>
 
-          <ZoomControl scale={scale} onChangeTimelineScale={changeScale} duration={duration} />
+          <ZoomControl scale={scale} onChangeTimelineScale={changeScale} duration={durationUs} />
         </div>
       </div>
     </div>
@@ -252,12 +271,21 @@ const ZoomControl = ({
 
   return (
     <div className="flex items-center justify-end">
-      <div className="flex lg:border-l pl-4 pr-2">
-        <Button size={"icon"} variant={"ghost"} onClick={onZoomOutClick}>
+      <div className="flex lg:border-l pl-4 pr-2 items-center gap-1">
+        <Button
+          size={"icon"}
+          variant={"ghost"}
+          onClick={onZoomOutClick}
+          className="relative group/tooltip"
+        >
           <ZoomOut size={16} />
+          <div className="absolute bottom-[130%] left-1/2 -translate-x-1/2 px-2.5 py-1 bg-neutral-900 border border-border/40 text-white text-[10px] font-medium rounded-md whitespace-nowrap shadow-xl opacity-0 scale-95 pointer-events-none group-hover/tooltip:opacity-100 group-hover/tooltip:scale-100 transition-all duration-150 ease-out z-50">
+            Zoom Out
+          </div>
         </Button>
+
         <Slider
-          className="w-28 hidden lg:flex"
+          className="w-28 hidden lg:flex mx-1"
           value={[localValue]}
           min={0.1}
           max={10}
@@ -268,16 +296,34 @@ const ZoomControl = ({
             onChangeTimelineScale({ ...scale, zoom: newZoom });
           }}
         />
-        <Button size={"icon"} variant={"ghost"} onClick={onZoomInClick}>
+
+        <Button
+          size={"icon"}
+          variant={"ghost"}
+          onClick={onZoomInClick}
+          className="relative group/tooltip"
+        >
           <ZoomIn size={16} />
+          <div className="absolute bottom-[130%] left-1/2 -translate-x-1/2 px-2.5 py-1 bg-neutral-900 border border-border/40 text-white text-[10px] font-medium rounded-md whitespace-nowrap shadow-xl opacity-0 scale-95 pointer-events-none group-hover/tooltip:opacity-100 group-hover/tooltip:scale-100 transition-all duration-150 ease-out z-50">
+            Zoom In
+          </div>
         </Button>
-        <Button onClick={onZoomFitClick} variant={"ghost"} size={"icon"}>
+
+        <Button
+          onClick={onZoomFitClick}
+          variant={"ghost"}
+          size={"icon"}
+          className="relative group/tooltip"
+        >
           <svg xmlns="http://www.w3.org/2000/svg" width="16" viewBox="0 0 24 24">
             <path
               fill="currentColor"
               d="M20 8V6h-2q-.425 0-.712-.288T17 5t.288-.712T18 4h2q.825 0 1.413.588T22 6v2q0 .425-.288.713T21 9t-.712-.288T20 8M2 8V6q0-.825.588-1.412T4 4h2q.425 0 .713.288T7 5t-.288.713T6 6H4v2q0 .425-.288.713T3 9t-.712-.288T2 8m18 12h-2q-.425 0-.712-.288T17 19t.288-.712T18 18h2v-2q0-.425.288-.712T21 15t.713.288T22 16v2q0 .825-.587 1.413T20 20M4 20q-.825 0-1.412-.587T2 18v-2q0-.425.288-.712T3 15t.713.288T4 16v2h2q.425 0 .713.288T7 19t-.288.713T6 20zm2-6v-4q0-.825.588-1.412T8 8h8q.825 0 1.413.588T18 10v4q0 .825-.587 1.413T16 16H8q-.825 0-1.412-.587T6 14"
             />
           </svg>
+          <div className="absolute bottom-[130%] left-1/2 -translate-x-1/2 px-2.5 py-1 bg-neutral-900 border border-border/40 text-white text-[10px] font-medium rounded-md whitespace-nowrap shadow-xl opacity-0 scale-95 pointer-events-none group-hover/tooltip:opacity-100 group-hover/tooltip:scale-100 transition-all duration-150 ease-out z-50">
+            Zoom to Fit
+          </div>
         </Button>
       </div>
     </div>

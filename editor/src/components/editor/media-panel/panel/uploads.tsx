@@ -198,7 +198,6 @@ export default function PanelUploads() {
             duration: file.duration,
           };
         });
-        console.warn("USE THIS LOGIC WHEN NEW CLIPS ARE ADDEDE EVENT");
         // // Update timeline clips with new blob URLs if needed
         // if (Object.keys(urlMapping).length > 0 && studio) {
         //   try {

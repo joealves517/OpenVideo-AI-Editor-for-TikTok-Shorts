@@ -1,9 +1,10 @@
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 interface PanelState {
   toolsPanel: number;
   copilotPanel: number;
+  copilotWidth: number;
   previewPanel: number;
   propertiesPanel: number;
   mainContent: number;
@@ -12,6 +13,7 @@ interface PanelState {
 
   setToolsPanel: (size: number) => void;
   setCopilotPanel: (size: number) => void;
+  setCopilotWidth: (width: number) => void;
   setPreviewPanel: (size: number) => void;
   setPropertiesPanel: (size: number) => void;
   setMainContent: (size: number) => void;
@@ -24,11 +26,12 @@ export const usePanelStore = create<PanelState>()(
     (set) => ({
       toolsPanel: 30,
       copilotPanel: 25,
+      copilotWidth: 380,
       previewPanel: 50,
       propertiesPanel: 25,
       mainContent: 70,
       timeline: 30,
-      isCopilotVisible: true,
+      isCopilotVisible: false,
 
       setToolsPanel: (size) => set({ toolsPanel: size }),
       setPreviewPanel: (size) => set({ previewPanel: size }),
@@ -36,11 +39,11 @@ export const usePanelStore = create<PanelState>()(
       setMainContent: (size) => set({ mainContent: size }),
       setTimeline: (size) => set({ timeline: size }),
       setCopilotPanel: (size) => set({ copilotPanel: size }),
-      toggleCopilot: () =>
-        set((state) => ({ isCopilotVisible: !state.isCopilotVisible })),
+      setCopilotWidth: (width) => set({ copilotWidth: width }),
+      toggleCopilot: () => set((state) => ({ isCopilotVisible: !state.isCopilotVisible })),
     }),
     {
-      name: 'panel-sizes',
-    }
-  )
+      name: "panel-sizes",
+    },
+  ),
 );

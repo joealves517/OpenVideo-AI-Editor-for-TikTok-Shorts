@@ -1,5 +1,5 @@
 import {
-  Application,
+  type Application,
   Sprite,
   Texture,
   Container,
@@ -147,8 +147,17 @@ export class PixiSpriteRenderer {
     if (isTexture) {
       // Validate texture dimensions
       if (frame.width === 0 || frame.height === 0) {
+        // Uninitialized texture, skip silently
+        return;
+      }
+      if (
+        frame.width < 0 ||
+        frame.height < 0 ||
+        isNaN(frame.width) ||
+        isNaN(frame.height)
+      ) {
         console.warn(
-          'PixiSpriteRenderer: Texture has zero dimensions',
+          'PixiSpriteRenderer: Texture has invalid negative/NaN dimensions',
           frame.width,
           frame.height
         );
@@ -178,11 +187,18 @@ export class PixiSpriteRenderer {
     const width = (frame as any).width;
     const height = (frame as any).height;
 
+    if (width === 0 || height === 0) {
+      // Uninitialized frame, skip silently
+      return;
+    }
+
     if (
       typeof width !== 'number' ||
       typeof height !== 'number' ||
-      width <= 0 ||
-      height <= 0
+      width < 0 ||
+      height < 0 ||
+      isNaN(width) ||
+      isNaN(height)
     ) {
       console.warn(
         'PixiSpriteRenderer: Invalid frame dimensions',

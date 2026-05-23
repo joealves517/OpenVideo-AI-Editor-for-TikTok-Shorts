@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback as reactUseCallback } from "react";
 import { useStore } from "zustand";
 import Header from "./header";
 import Ruler from "./ruler";
@@ -26,6 +26,8 @@ import { useTimelineOffsetX } from "../hooks/use-timeline-offset";
 import { addStudioSync } from "./studio-to-store-sync";
 import { TIMELINE_SCALE_CHANGED } from "@openvideo/timeline";
 import Effect from "./items/effect";
+import { usePanelStore } from "@/stores/panel-store";
+import { cn } from "@/lib/utils";
 
 CanvasTimeline.registerItems({
   Text,
@@ -57,9 +59,11 @@ const Timeline = () => {
   const { studio } = useStudioStore();
   const scale = useStore(projectStore, (s) => s.scale);
   const setScale = projectStore.getState().setScale;
+  const prevZoomRef = useRef(scale.zoom);
 
   const timelineOffsetX = useTimelineOffsetX();
   const timelineContainerRef = useRef<HTMLDivElement>(null);
+
   const onMouseDown = () => {};
   const onMouseMove = () => {};
   const onMouseOut = () => {};
@@ -96,7 +100,7 @@ const Timeline = () => {
 
   useEffect(() => {
     const timelineContainerEl = timelineContainerRef.current;
-    if (!timelineContainerEl || !canvasRef.current) return;
+    if (!timelineContainerEl || !timeline) return;
 
     const resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
@@ -107,9 +111,9 @@ const Timeline = () => {
       // Header is 50px, Ruler is 24px + 1px border = 25px.
       // Total UI offset = 75px.
       const containerWidth = width - timelineOffsetX;
-      const containerHeight = height - 75;
+      const containerHeight = height - 80;
 
-      canvasRef.current?.resize(
+      timeline.resize(
         {
           width: containerWidth,
           height: containerHeight,
@@ -120,7 +124,7 @@ const Timeline = () => {
 
     resizeObserver.observe(timelineContainerEl);
     return () => resizeObserver.disconnect();
-  }, [timelineOffsetX]);
+  }, [timelineOffsetX, timeline]);
 
   useEffect(() => {
     const canvasEl = canvasElRef.current;
@@ -130,7 +134,7 @@ const Timeline = () => {
 
     const containerWidth =
       (document.getElementById("timeline-header")?.clientWidth || 0) - timelineOffsetX;
-    const containerHeight = (timelineContainerEl.clientHeight || 320) - 75;
+    const containerHeight = (timelineContainerRef.current?.clientHeight || 320) - 80;
     const canvas = new CanvasTimeline(canvasEl, {
       width: containerWidth,
       height: containerHeight,
@@ -144,7 +148,7 @@ const Timeline = () => {
       scale: scale,
       duration: durationUs,
       spacing: {
-        left: 16,
+        left: 4,
         right: 40,
       },
       sizesMap: {
@@ -182,16 +186,16 @@ const Timeline = () => {
     });
 
     canvas.initScrollbars({
-      offsetX: 16,
+      offsetX: 0,
       offsetY: 0,
-      extraMarginX: 100,
-      extraMarginY: 50,
+      extraMarginX: 150,
+      extraMarginY: 10,
+      scrollbarColor: "#4b5563",
       scrollbarWidth: 8,
-      scrollbarColor: "rgba(33, 33, 33, 0.8)",
     });
 
     canvas.onViewportChange((left: number) => {
-      setScrollLeft(left + 16);
+      setScrollLeft(left);
     });
 
     canvas.emitter.on(TIMELINE_SCALE_CHANGED, (data) => {
@@ -225,6 +229,9 @@ const Timeline = () => {
 
   const onClickRuler = (units: number) => {
     const timeUs = unitsToTimeUs(units, scale.zoom);
+    if (projectStore.getState().isPlaying) {
+      core.pause();
+    }
     projectStore.getState().seek(timeUs);
   };
 
@@ -247,11 +254,18 @@ const Timeline = () => {
 
     canvasRef.current.syncScale({ scale });
 
-    const canvasWidth = canvasRef.current.width;
-    if (availableScroll < canvasWidth + scrollLeft) {
-      canvasRef.current.scrollTo({ scrollLeft: availableScroll - canvasWidth });
+    const oldZoom = prevZoomRef.current;
+    const newZoom = scale.zoom;
+
+    if (oldZoom !== newZoom) {
+      const playheadPosBefore = timeUsToUnits(currentTimeUs, oldZoom);
+      const playheadPosAfter = timeUsToUnits(currentTimeUs, newZoom);
+      const newScrollLeft = Math.max(0, scrollLeft + (playheadPosAfter - playheadPosBefore));
+
+      onRulerScroll(newScrollLeft);
+      prevZoomRef.current = newZoom;
     }
-  }, [scale]);
+  }, [scale, currentTimeUs, scrollLeft, onRulerScroll]);
 
   useEffect(() => {
     const container = timelineContainerRef.current;
@@ -269,13 +283,13 @@ const Timeline = () => {
 
         if (oldZoom !== clampedZoom) {
           setScale((prev) => ({ ...prev, zoom: clampedZoom }));
-          const rect = timelineContainerRef.current?.getBoundingClientRect();
-          if (rect) {
-            const cursorX = e.clientX - rect.left - timelineOffsetX;
-            const newScrollLeft =
-              (cursorX + scrollLeft - 16) * (clampedZoom / oldZoom) - (cursorX - 16);
-            onRulerScroll(newScrollLeft);
-          }
+
+          // Zoom centering on Playhead
+          const playheadPosBefore = timeUsToUnits(currentTimeUs, oldZoom);
+          const playheadPosAfter = timeUsToUnits(currentTimeUs, clampedZoom);
+          const newScrollLeft = Math.max(0, scrollLeft + (playheadPosAfter - playheadPosBefore));
+
+          onRulerScroll(newScrollLeft);
         }
       } else {
         const delta = e.shiftKey ? e.deltaY : e.deltaX || e.deltaY;
@@ -294,7 +308,7 @@ const Timeline = () => {
     <div
       ref={timelineContainerRef}
       id="timeline-container"
-      className="flex flex-col relative w-full h-full overflow-hidden bg-card border-t border-transparent"
+      className="flex flex-col relative w-full h-full overflow-visible bg-card border-t border-transparent"
       onMouseDown={onMouseDown}
       onMouseMove={onMouseMove}
       onMouseOut={onMouseOut}

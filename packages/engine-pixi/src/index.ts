@@ -1,3 +1,5 @@
+import 'pixi.js/unsafe-eval';
+
 export { fastConcatMP4, fixFMP4Duration, mixinMP4AndAudio } from './mp4-utils';
 export { createChromakey } from './utils/chromakey';
 export { renderTxt2ImgBitmap } from './utils/dom';

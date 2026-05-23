@@ -1,9 +1,6 @@
 import { useEffect, useState, useRef } from "react";
-import { createPortal } from "react-dom";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { getTransitionOptions, registerCustomTransition } from "@openvideo/engine-pixi";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2 } from "lucide-react";
+import { getTransitionOptions } from "@openvideo/engine-pixi";
 import { Icons } from "@/components/shared/icons";
 import { core } from "@/lib/project";
 import Draggable from "@/components/shared/draggable";
@@ -136,135 +133,16 @@ const TransitionDefault = () => {
   );
 };
 
-// ─── Custom Transitions (from DB) ────────────────────────────────────────────
-
-const TransitionCustom = () => {
-  const [ownPresets, setOwnPresets] = useState<CustomPreset[]>([]);
-  const [publishedPresets, setPublishedPresets] = useState<CustomPreset[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const fetchPresets = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const res = await fetch("/api/custom-presets?category=transitions");
-        if (!res.ok) throw new Error("Failed to fetch custom transitions");
-        const json = await res.json();
-        setOwnPresets(json.own ?? []);
-        setPublishedPresets(json.published ?? []);
-      } catch {
-        setError("Could not load custom transitions.");
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchPresets();
-  }, []);
-
-  const handleClick = async (preset: CustomPreset) => {
-    const key = `custom_transition_${preset.id}`;
-    await registerCustomTransition(key, {
-      key,
-      label: preset.data.label || preset.name,
-      fragment: preset.data.fragment,
-    } as any);
-
-    await core.clip.add({
-      type: "Transition",
-      name: preset.data.label || preset.name,
-      transitionEffect: {
-        id: key,
-        key: key,
-        name: preset.data.label || preset.name,
-      },
-      duration: TRANSITION_DURATION_DEFAULT,
-      metadata: {
-        fragment: preset.data.fragment,
-      },
-    });
-  };
-
-  if (isLoading) {
-    return (
-      <div className="flex flex-col items-center justify-center py-12 gap-2 text-muted-foreground">
-        <Loader2 className="size-5 animate-spin" />
-        <span className="text-xs">Loading custom transitions…</span>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center py-12 text-xs text-destructive">{error}</div>
-    );
-  }
-
-  if (ownPresets.length === 0 && publishedPresets.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-12 gap-2 text-muted-foreground">
-        <span className="text-xs">No custom transitions yet.</span>
-        <span className="text-[10px]">Create one from the Gallery to see it here.</span>
-      </div>
-    );
-  }
-
-  return (
-    <>
-      {ownPresets.map((preset) => (
-        <TransitionCard
-          key={preset.id}
-          effectKey={preset.id}
-          label={preset.data.label || preset.name}
-          previewStatic=""
-          previewDynamic=""
-          onClick={() => handleClick(preset)}
-        />
-      ))}
-      {publishedPresets.map((preset) => (
-        <TransitionCard
-          key={preset.id}
-          effectKey={preset.id}
-          label={preset.data.label || preset.name}
-          previewStatic=""
-          previewDynamic=""
-          onClick={() => handleClick(preset)}
-          badge="Public"
-        />
-      ))}
-    </>
-  );
-};
-
 // ─── Panel ────────────────────────────────────────────────────────────────────
 
 const PanelTransition = () => {
   return (
     <div className="p-4 h-full">
-      <Tabs defaultValue="default" className="w-full h-full">
-        <TabsList className="w-full">
-          <TabsTrigger value="default" className="flex-1">
-            Default
-          </TabsTrigger>
-          <TabsTrigger value="custom" className="flex-1">
-            Custom
-          </TabsTrigger>
-        </TabsList>
-
-        {[
-          { value: "default", Component: TransitionDefault },
-          { value: "custom", Component: TransitionCustom },
-        ].map(({ value, Component }) => (
-          <TabsContent key={value} value={value} className="h-full">
-            <ScrollArea className="h-[calc(100%-60px)]">
-              <div className={gridClasses}>
-                <Component />
-              </div>
-            </ScrollArea>
-          </TabsContent>
-        ))}
-      </Tabs>
+      <ScrollArea className="h-full">
+        <div className={gridClasses}>
+          <TransitionDefault />
+        </div>
+      </ScrollArea>
     </div>
   );
 };

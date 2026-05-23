@@ -1,15 +1,8 @@
 import { useEffect, useState } from "react";
-import {
-  Effect,
-  getEffectOptions,
-  VALUES_FILTER_SPECIAL,
-  registerCustomEffect,
-} from "@openvideo/engine-pixi";
+import { Effect, getEffectOptions, VALUES_FILTER_SPECIAL } from "@openvideo/engine-pixi";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatFilterName } from "@/utils/effects";
 import { core } from "@/lib/project";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2 } from "lucide-react";
 import Draggable from "@/components/shared/draggable";
 
 const EFFECT_DURATION_DEFAULT = 5000000;
@@ -151,146 +144,16 @@ const EffectDefault = () => {
   );
 };
 
-// ─── Custom Effects (from DB) ─────────────────────────────────────────────────
-
-type CustomPreset = {
-  id: string;
-  name: string;
-  category: string;
-  data: { label: string; fragment: string };
-  published: boolean;
-  userId: string;
-};
-
-const EffectCustom = () => {
-  const [ownPresets, setOwnPresets] = useState<CustomPreset[]>([]);
-  const [publishedPresets, setPublishedPresets] = useState<CustomPreset[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const fetchPresets = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const res = await fetch("/api/custom-presets?category=effects");
-        if (!res.ok) throw new Error("Failed to fetch custom effects");
-        const json = await res.json();
-        setOwnPresets(json.own ?? []);
-        setPublishedPresets(json.published ?? []);
-      } catch (err) {
-        setError("Could not load custom effects.");
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchPresets();
-  }, []);
-
-  const handleClick = async (preset: CustomPreset) => {
-    // Use a stable key derived from the preset id
-    const key = `custom_effect_${preset.id}`;
-    // Register the custom GLSL shader so the engine knows how to render it
-    await registerCustomEffect(key, {
-      key,
-      label: preset.data.label || preset.name,
-      fragment: preset.data.fragment,
-    } as any);
-    await core.clip.add({
-      type: "Effect",
-      name: preset.data.label || preset.name,
-      display: { from: 0, to: EFFECT_DURATION_DEFAULT },
-      duration: EFFECT_DURATION_DEFAULT,
-      effect: {
-        id: "eff_" + preset.id,
-        key: key,
-        name: key,
-      },
-      metadata: {
-        fragment: preset.data.fragment,
-      },
-    });
-  };
-
-  if (isLoading) {
-    return (
-      <div className="col-span-full flex flex-col items-center justify-center py-12 gap-2 text-muted-foreground">
-        <Loader2 className="size-5 animate-spin" />
-        <span className="text-xs">Loading custom effects…</span>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="col-span-full flex items-center justify-center py-12 text-xs text-destructive">
-        {error}
-      </div>
-    );
-  }
-
-  if (ownPresets.length === 0 && publishedPresets.length === 0) {
-    return (
-      <div className="col-span-full flex flex-col items-center justify-center py-12 gap-2 text-muted-foreground">
-        <span className="text-xs">No custom effects yet.</span>
-        <span className="text-[10px]">Create one from the Gallery to see it here.</span>
-      </div>
-    );
-  }
-
-  return (
-    <>
-      {ownPresets.map((preset) => (
-        <EffectCard
-          key={preset.id}
-          label={preset.data.label || preset.name}
-          staticSrc=""
-          dynamicSrc=""
-          onClick={() => handleClick(preset)}
-        />
-      ))}
-      {publishedPresets.map((preset) => (
-        <EffectCard
-          key={preset.id}
-          label={preset.data.label || preset.name}
-          staticSrc=""
-          dynamicSrc=""
-          onClick={() => handleClick(preset)}
-          badge="Public"
-        />
-      ))}
-    </>
-  );
-};
-
 // ─── Panel ────────────────────────────────────────────────────────────────────
 
 const PanelEffect = () => {
   return (
     <div className="p-4 h-full">
-      <Tabs defaultValue="default" className="w-full h-full">
-        <TabsList className="w-full">
-          <TabsTrigger value="default" className="flex-1">
-            Default
-          </TabsTrigger>
-          <TabsTrigger value="custom" className="flex-1">
-            Custom
-          </TabsTrigger>
-        </TabsList>
-
-        {[
-          { value: "default", Component: EffectDefault },
-          { value: "custom", Component: EffectCustom },
-        ].map(({ value, Component }) => (
-          <TabsContent key={value} value={value} className="h-full">
-            <ScrollArea className="h-[calc(100%-60px)]">
-              <div className={gridClasses}>
-                <Component />
-              </div>
-            </ScrollArea>
-          </TabsContent>
-        ))}
-      </Tabs>
+      <ScrollArea className="h-full">
+        <div className={gridClasses}>
+          <EffectDefault />
+        </div>
+      </ScrollArea>
     </div>
   );
 };

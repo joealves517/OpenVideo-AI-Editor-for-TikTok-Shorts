@@ -1,6 +1,6 @@
-import { z } from 'genkit';
-import { ai } from './chat-flow';
-import { getScriptToVideoTools } from './script-to-video-tools';
+import { z } from "genkit";
+import { ai } from "./chat-flow";
+import { getScriptToVideoTools } from "./script-to-video-tools";
 
 const SYSTEM_PROMPT = `You are a script-to-video assistant. Your goal is to help users create and refine scripts for their videos and configure generation parameters.
 
@@ -40,7 +40,7 @@ Parameters Mapping for update_video_config:
 
 export const scriptToVideoFlow = ai.defineFlow(
   {
-    name: 'scriptToVideoFlow',
+    name: "scriptToVideoFlow",
     inputSchema: z.object({
       message: z.string(),
     }),
@@ -62,39 +62,56 @@ export const scriptToVideoFlow = ai.defineFlow(
       tools: getScriptToVideoTools(),
     });
 
-    const toolsQueue: Array<{ name: string; arg: any; response?: any }> = [];
+    const toolsQueue: Array<{ id?: string; name: string; arg: any; response?: any }> = [];
 
     for await (const chunk of stream) {
-      if (chunk.role === 'model' && chunk.content?.[0]?.reasoning) {
+      if (chunk.text) {
         sendChunk(
           JSON.stringify({
-            event: 'reasoning',
-            text: chunk.content[0].reasoning,
-          })
+            event: "text",
+            text: chunk.text,
+          }),
         );
       }
 
-      if (chunk.role === 'model' && chunk.content?.[0]?.toolRequest) {
+      if (chunk.role === "model" && chunk.content?.[0]?.reasoning) {
+        sendChunk(
+          JSON.stringify({
+            event: "reasoning",
+            text: chunk.content[0].reasoning,
+          }),
+        );
+      }
+
+      if (chunk.role === "model" && chunk.content) {
         for (let idx = 0; idx < chunk.content.length; idx++) {
-          const toolContent = chunk.content[idx];
-          if (toolContent.toolRequest) {
-            const name = toolContent.toolRequest.name;
-            const arg = toolContent.toolRequest.input;
-            toolsQueue.push({ name, arg });
+          const tc = chunk.content[idx];
+          if (tc.toolRequest) {
+            const req = tc.toolRequest;
+            const existing = toolsQueue.find((t) => {
+              if (req.ref && t.id) return t.id === req.ref;
+              return t.name === req.name && JSON.stringify(t.arg) === JSON.stringify(req.input);
+            });
+            if (existing) {
+              existing.arg = req.input;
+              if (req.ref) existing.id = req.ref;
+            } else {
+              toolsQueue.push({ id: req.ref, name: req.name, arg: req.input });
+            }
           }
         }
       }
 
-      if (chunk.role === 'tool' && chunk.content?.[0]?.toolResponse) {
+      if (chunk.role === "tool" && chunk.content) {
         for (let idx = 0; idx < chunk.content.length; idx++) {
-          const toolContent = chunk.content[idx];
-          if (toolContent.toolResponse) {
-            const name = toolContent.toolResponse.name;
-            const responseOutput = toolContent.toolResponse.output;
-            const tool = toolsQueue.find(
-              (t) => t.name === name && t.response === undefined
-            );
-            if (tool) tool.response = responseOutput;
+          const tc = chunk.content[idx];
+          if (tc.toolResponse) {
+            const res = tc.toolResponse;
+            const tool = toolsQueue.find((t) => {
+              if (res.ref && t.id) return t.id === res.ref;
+              return t.name === res.name && t.response === undefined;
+            });
+            if (tool) tool.response = res.output;
           }
         }
       }
@@ -103,15 +120,15 @@ export const scriptToVideoFlow = ai.defineFlow(
     for (const tool of toolsQueue) {
       sendChunk(
         JSON.stringify({
-          event: 'tool',
+          event: "tool",
           name: tool.name,
           arg: tool.arg,
           response: tool.response,
-        })
+        }),
       );
     }
 
     const { text } = await response;
     return { reply: text };
-  }
+  },
 );
